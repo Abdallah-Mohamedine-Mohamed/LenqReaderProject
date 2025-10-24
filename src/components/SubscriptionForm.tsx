@@ -4,9 +4,8 @@ import { Newspaper, ArrowLeft, CheckCircle, Loader, Phone, User } from 'lucide-r
 import { supabase } from '../lib/supabase';
 import type { Formule } from '../lib/supabase';
 import { OTPInput } from './OTPInput';
-import { PaymentMethodSelector } from './PaymentMethodSelector';
+import { IPayCheckout } from './IPayCheckout';
 import { validatePhoneNumber, normalizePhoneNumber, detectCountryCode } from '../lib/otp';
-import { initiatePayment, PaymentType } from '../lib/ipay';
 import {
   handleSignupFlow,
   verifyOTP,
@@ -25,7 +24,7 @@ export function SubscriptionForm() {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(false);
 
-  const [registrationStep, setRegistrationStep] = useState<'form' | 'otp' | 'payment_method'>('form');
+  const [registrationStep, setRegistrationStep] = useState<'form' | 'otp' | 'payment'>('form');
   const [formData, setFormData] = useState({
     nom: '',
     numero_whatsapp: '',
@@ -220,7 +219,7 @@ export function SubscriptionForm() {
 
         if (abonnementError) throw abonnementError;
         setAbonnementId(abonnementData.id);
-        setRegistrationStep('payment_method');
+        setRegistrationStep('payment');
       }
     } catch (err: any) {
       console.error('❌ Erreur OTP:', err);
@@ -436,39 +435,36 @@ export function SubscriptionForm() {
             </form>
           )}
 
-          {registrationStep === 'payment_method' && (
+          {registrationStep === 'payment' && tempUserId && abonnementId && formule && (
             <div className="space-y-6">
-              <PaymentMethodSelector
-                onSelect={handlePaymentMethodSelect}
-                loading={submitting}
-              />
-
-              <div className="relative">
-                <div className="absolute inset-0 flex items-center">
-                  <div className="w-full border-t border-gray-700"></div>
-                </div>
-                <div className="relative flex justify-center text-sm">
-                  <span className="px-4 bg-gray-800 text-gray-400">ou</span>
-                </div>
+              <div className="text-center mb-6">
+                <h3 className="text-xl font-bold text-white mb-2">Finaliser le paiement</h3>
+                <p className="text-gray-400">
+                  Cliquez sur le bouton ci-dessous pour effectuer le paiement de votre abonnement
+                </p>
               </div>
 
-              <button
-                onClick={handlePayWithExternalLink}
-                disabled={submitting || !formule?.external_payment_url}
-                className="w-full py-4 bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-600 hover:to-yellow-700 text-black font-bold rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-              >
-                {submitting ? (
-                  <>
-                    <Loader className="w-5 h-5 animate-spin" />
-                    Redirection...
-                  </>
-                ) : (
-                  'Payer via iPay'
-                )}
-              </button>
-              <p className="text-xs text-gray-500 text-center">
-                Vous serez redirigé vers le portail de paiement sécurisé iPay
-              </p>
+              <IPayCheckout
+                amount={formule.prix_fcfa}
+                userId={tempUserId}
+                abonnementId={abonnementId}
+                formuleId={formule.id}
+                onSuccess={(paymentId) => {
+                  setSuccess(true);
+                  setTimeout(() => {
+                    navigate(`/payment-status?payment_id=${paymentId}`);
+                  }, 1500);
+                }}
+                onError={(errorMsg) => {
+                  setError(errorMsg);
+                }}
+              />
+
+              {error && (
+                <div className="bg-red-900/50 border border-red-700 text-red-200 px-4 py-3 rounded-lg text-sm">
+                  {error}
+                </div>
+              )}
             </div>
           )}
 

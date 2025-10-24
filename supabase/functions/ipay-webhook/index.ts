@@ -167,44 +167,27 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    let newStatut = "en_attente";
-    let abonnementStatut = "en_attente";
-    let userStatut = "inactif";
+    if (status === "succeeded" || status === "paid" || status === "completed") {
+      console.log(`✅ Payment succeeded, calling confirm_payment_secure`);
 
-    if (status === "succeeded") {
-      newStatut = "confirme";
-      abonnementStatut = "actif";
-      userStatut = "actif";
-    } else if (status === "failed") {
-      newStatut = "echoue";
-      abonnementStatut = "echoue";
-    } else if (status === "pending") {
-      newStatut = "en_attente";
-    }
+      const { data: confirmResult, error: confirmError } = await supabase.rpc(
+        'confirm_payment_secure',
+        {
+          p_payment_id: paiement.id,
+          p_ipay_transaction_id: transaction_id || reference,
+          p_ipay_status: status,
+          p_notes: `Webhook confirmation - ${status} at ${new Date().toISOString()}`,
+        }
+      );
 
-    await supabase
-      .from("paiements")
-      .update({
-        statut: newStatut,
-        ipay_status: status,
-        ipay_reference: reference || paiement.ipay_reference,
-        notes: `Webhook update: ${status} - ${new Date().toISOString()}`,
-      })
-      .eq("id", paiement.id);
+      if (confirmError) {
+        console.error('❌ Error confirming payment:', confirmError);
+        throw confirmError;
+      }
 
-    console.log(`✅ Paiement ${paiement.id} mis à jour: ${newStatut}`);
+      console.log(`✅ Payment confirmed via RPC:`, confirmResult);
 
-    if (paiement.abonnement_id) {
-      await supabase
-        .from("abonnements")
-        .update({
-          statut: abonnementStatut,
-        })
-        .eq("id", paiement.abonnement_id);
-
-      console.log(`✅ Abonnement ${paiement.abonnement_id} mis à jour: ${abonnementStatut}`);
-
-      if (status === "succeeded") {
+      if (confirmResult && confirmResult.success) {
         const { data: abonnement } = await supabase
           .from("abonnements")
           .select("user_id, date_fin, formules(nom)")
@@ -214,19 +197,9 @@ Deno.serve(async (req: Request) => {
         if (abonnement) {
           const { data: user } = await supabase
             .from("users")
-            .select("telephone, prenom, nom")
+            .select("telephone, prenom, nom, numero_whatsapp")
             .eq("id", abonnement.user_id)
             .maybeSingle();
-
-          await supabase
-            .from("users")
-            .update({
-              statut_abonnement: userStatut,
-              date_fin_abonnement: abonnement.date_fin,
-            })
-            .eq("id", abonnement.user_id);
-
-          console.log(`✅ User ${abonnement.user_id} mis à jour: ${userStatut}`);
 
           await supabase.from("notifications").insert({
             user_id: abonnement.user_id,
@@ -238,10 +211,11 @@ Deno.serve(async (req: Request) => {
 
           console.log(`✅ Notification envoyée à user ${abonnement.user_id}`);
 
-          if (user?.telephone) {
+          const phoneNumber = user?.numero_whatsapp || user?.telephone;
+          if (phoneNumber) {
             const formuleNom = (abonnement.formules as any)?.nom || "Abonnement";
-            const dateFin = new Date(abonnement.date_fin).toLocaleDateString("fr-FR");
-            const whatsappMessage = `Bonjour ${user.prenom || ""} ${user.nom || ""},\n\n✅ Votre paiement de ${paiement.montant_fcfa} FCFA a été confirmé avec succès !\n\n📰 Abonnement: ${formuleNom}\n📅 Valable jusqu'au: ${dateFin}\n\nMerci pour votre confiance ! Vous pouvez maintenant accéder à toutes vos éditions.\n\nÉquipe Libre Vision`;
+            const dateFin = new Date(confirmResult.new_end_date).toLocaleDateString("fr-FR");
+            const whatsappMessage = `Bonjour ${user.prenom || ""} ${user.nom || ""},\n\n✅ Votre paiement de ${paiement.montant_fcfa} FCFA a été confirmé avec succès !\n\n📰 Abonnement: ${formuleNom}\n📅 Valable jusqu'au: ${dateFin}\n\nMerci pour votre confiance ! Vous pouvez maintenant accéder à toutes vos éditions.\n\nÉquipe L'Enquêteur`;
 
             try {
               const whatsappResponse = await fetch(`${supabaseUrl}/functions/v1/send-whatsapp`, {
@@ -251,14 +225,14 @@ Deno.serve(async (req: Request) => {
                   "Authorization": `Bearer ${supabaseKey}`,
                 },
                 body: JSON.stringify({
-                  to: user.telephone,
+                  to: phoneNumber,
                   text: whatsappMessage,
                 }),
               });
 
               const whatsappResult = await whatsappResponse.json();
               if (whatsappResult.success) {
-                console.log(`✅ WhatsApp confirmation sent to ${user.telephone}`);
+                console.log(`✅ WhatsApp confirmation sent to ${phoneNumber}`);
               } else {
                 console.error(`❌ Failed to send WhatsApp: ${whatsappResult.error}`);
               }
@@ -268,6 +242,38 @@ Deno.serve(async (req: Request) => {
           }
         }
       }
+    } else if (status === "failed" || status === "cancelled" || status === "expired") {
+      console.log(`❌ Payment failed: ${status}`);
+
+      await supabase
+        .from("paiements")
+        .update({
+          statut: "echoue",
+          ipay_status: status,
+          ipay_reference: reference || paiement.ipay_reference,
+        })
+        .eq("id", paiement.id);
+
+      await supabase.from('payment_events').insert({
+        payment_id: paiement.id,
+        user_id: paiement.user_id,
+        event_type: 'failed',
+        old_status: paiement.statut,
+        new_status: 'echoue',
+        ipay_transaction_id: transaction_id || reference,
+        ipay_status: status,
+        notes: `Webhook - Payment ${status}`,
+      });
+    } else {
+      console.log(`ℹ️ Payment status: ${status}`);
+
+      await supabase
+        .from("paiements")
+        .update({
+          ipay_status: status,
+          ipay_reference: reference || paiement.ipay_reference,
+        })
+        .eq("id", paiement.id);
     }
 
     await supabase.from("webhook_logs").insert({
@@ -283,7 +289,7 @@ Deno.serve(async (req: Request) => {
         success: true,
         message: "Webhook traité avec succès",
         payment_id: paiement.id,
-        new_status: newStatut,
+        status: status,
       }),
       {
         status: 200,
