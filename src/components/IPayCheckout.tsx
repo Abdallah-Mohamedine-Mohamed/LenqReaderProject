@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import { Loader } from 'lucide-react';
 
@@ -21,14 +21,46 @@ export function IPayCheckout({
   onSuccess,
   onError,
 }: IPayCheckoutProps) {
-  const containerRef = useRef<HTMLDivElement>(null);
   const [loading, setLoading] = useState(true);
   const [paymentId, setPaymentId] = useState<string | null>(null);
   const [transactionId, setTransactionId] = useState<string>('');
+  const [redirectUrl, setRedirectUrl] = useState<string>('');
+  const [callbackUrl, setCallbackUrl] = useState<string>('');
 
   useEffect(() => {
     initializePayment();
   }, []);
+
+  useEffect(() => {
+    if (paymentId && transactionId) {
+      const subscription = supabase
+        .channel(`payment:${paymentId}`)
+        .on(
+          'postgres_changes',
+          {
+            event: 'UPDATE',
+            schema: 'public',
+            table: 'paiements',
+            filter: `id=eq.${paymentId}`,
+          },
+          (payload) => {
+            if (payload.new && 'statut' in payload.new) {
+              const status = payload.new.statut as string;
+              if (status === 'confirme') {
+                onSuccess?.(paymentId);
+              } else if (status === 'echoue') {
+                onError?.('Le paiement a échoué');
+              }
+            }
+          }
+        )
+        .subscribe();
+
+      return () => {
+        supabase.removeChannel(subscription);
+      };
+    }
+  }, [paymentId, transactionId]);
 
   const generateTransactionId = () => {
     const timestamp = Date.now();
@@ -66,7 +98,20 @@ export function IPayCheckout({
       }
 
       setPaymentId(result.payment_id);
-      renderIPayButton(txnId, result.payment_id);
+
+      const redUrl = `${window.location.origin}/payment-status?payment_id=${result.payment_id}&reference=${txnId}`;
+      const cbUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/ipay-webhook`;
+
+      setRedirectUrl(redUrl);
+      setCallbackUrl(cbUrl);
+
+      console.log('✅ Payment initialized:', {
+        paymentId: result.payment_id,
+        transactionId: txnId,
+        amount,
+        redirectUrl: redUrl,
+        callbackUrl: cbUrl,
+      });
     } catch (error) {
       console.error('Error initializing payment:', error);
       const errorMessage = error instanceof Error ? error.message : 'Erreur lors de l\'initialisation du paiement';
@@ -74,86 +119,6 @@ export function IPayCheckout({
     } finally {
       setLoading(false);
     }
-  };
-
-  const renderIPayButton = (txnId: string, paymentId: string) => {
-    if (!containerRef.current) return;
-
-    const redirectUrl = `${window.location.origin}/payment-status?payment_id=${paymentId}&reference=${txnId}`;
-    const callbackUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/ipay-webhook`;
-
-    containerRef.current.innerHTML = '';
-
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = 'ipaymoney-button w-full bg-gradient-to-r from-amber-500 to-yellow-600 text-black font-bold py-4 px-6 rounded-lg hover:from-amber-600 hover:to-yellow-700 transition-all transform hover:scale-105 shadow-lg';
-    button.setAttribute('data-amount', amount.toString());
-    button.setAttribute('data-environement', 'live');
-    button.setAttribute('data-key', IPAY_PUBLIC_KEY);
-    button.setAttribute('data-transaction-id', txnId);
-    button.setAttribute('data-redirect-url', redirectUrl);
-    button.setAttribute('data-callback-url', callbackUrl);
-    button.textContent = `Payer ${amount.toLocaleString()} FCFA`;
-
-    containerRef.current.appendChild(button);
-
-    console.log('iPay button attributes:', {
-      amount: amount.toString(),
-      environement: 'live',
-      key: IPAY_PUBLIC_KEY,
-      transactionId: txnId,
-      redirectUrl,
-      callbackUrl,
-    });
-
-    setTimeout(() => {
-      const btn = containerRef.current?.querySelector('.ipaymoney-button');
-      if (btn) {
-        console.log('✅ Button rendered with class ipaymoney-button');
-        console.log('Button element:', btn);
-        console.log('All data attributes:', {
-          amount: btn.getAttribute('data-amount'),
-          env: btn.getAttribute('data-environement'),
-          key: btn.getAttribute('data-key'),
-          txnId: btn.getAttribute('data-transaction-id'),
-        });
-      } else {
-        console.error('❌ Button not found after render');
-      }
-
-      if (typeof window !== 'undefined' && (window as any).iPayMoney) {
-        console.log('✅ iPay SDK is loaded');
-      } else {
-        console.warn('⚠️ iPay SDK not detected on window');
-      }
-    }, 500);
-
-    const subscription = supabase
-      .channel(`payment:${paymentId}`)
-      .on(
-        'postgres_changes',
-        {
-          event: 'UPDATE',
-          schema: 'public',
-          table: 'paiements',
-          filter: `id=eq.${paymentId}`,
-        },
-        (payload) => {
-          if (payload.new && 'statut' in payload.new) {
-            const status = payload.new.statut as string;
-            if (status === 'confirme') {
-              onSuccess?.(paymentId);
-            } else if (status === 'echoue') {
-              onError?.('Le paiement a échoué');
-            }
-          }
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(subscription);
-    };
   };
 
   if (loading) {
@@ -165,46 +130,47 @@ export function IPayCheckout({
     );
   }
 
+  if (!paymentId || !transactionId) {
+    return (
+      <div className="bg-red-900/50 border border-red-700 text-red-200 px-4 py-3 rounded-lg">
+        Erreur lors de l'initialisation du paiement. Veuillez réessayer.
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-4">
-      <div ref={containerRef} className="w-full min-h-[60px] flex items-center justify-center">
-        {!paymentId && (
-          <div className="text-gray-400 text-sm">Chargement du bouton de paiement...</div>
-        )}
-      </div>
+      <button
+        type="button"
+        className="ipaymoney-button w-full bg-gradient-to-r from-amber-500 to-yellow-600 text-black font-bold py-4 px-6 rounded-lg hover:from-amber-600 hover:to-yellow-700 transition-all transform hover:scale-105 shadow-lg"
+        data-amount={amount.toString()}
+        data-environement="live"
+        data-key={IPAY_PUBLIC_KEY}
+        data-transaction-id={transactionId}
+        data-redirect-url={redirectUrl}
+        data-callback-url={callbackUrl}
+      >
+        Payer {amount.toLocaleString()} FCFA
+      </button>
 
       <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg p-4">
         <p className="text-amber-300 text-sm mb-2">
           <strong>Important :</strong>
         </p>
         <ul className="text-gray-300 text-sm space-y-1 list-disc list-inside">
-          <li>Cliquez sur le bouton orange pour accéder à la page de paiement iPay</li>
+          <li>Cliquez sur le bouton orange ci-dessus pour effectuer le paiement</li>
           <li>Choisissez votre mode de paiement (Mobile Money, Carte bancaire, etc.)</li>
           <li>Suivez les instructions pour compléter le paiement</li>
+          <li>Restez sur la page de paiement jusqu'à la confirmation</li>
           <li>Vous serez redirigé automatiquement après le paiement</li>
         </ul>
       </div>
 
-      {paymentId && (
-        <div className="text-center space-y-3">
-          <p className="text-gray-400 text-xs">
-            Référence de transaction: <span className="font-mono text-gray-300">{transactionId}</span>
-          </p>
-
-          <div className="pt-2 border-t border-gray-700">
-            <p className="text-gray-500 text-xs mb-2">Le bouton ne s'affiche pas ?</p>
-            <button
-              onClick={() => {
-                const redirectUrl = `${window.location.origin}/payment-status?payment_id=${paymentId}&reference=${transactionId}`;
-                window.open(`https://i-pay.money/checkout?amount=${amount}&key=${IPAY_PUBLIC_KEY}&transaction_id=${transactionId}&redirect_url=${encodeURIComponent(redirectUrl)}`, '_blank');
-              }}
-              className="text-amber-500 hover:text-amber-400 text-sm underline"
-            >
-              Ouvrir le portail de paiement iPay directement
-            </button>
-          </div>
-        </div>
-      )}
+      <div className="text-center">
+        <p className="text-gray-400 text-xs">
+          Référence de transaction: <span className="font-mono text-gray-300">{transactionId}</span>
+        </p>
+      </div>
     </div>
   );
 }
