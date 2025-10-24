@@ -22,6 +22,7 @@ interface PaymentRequest {
   payment_type: PaymentType;
   user_id?: string;
   abonnement_id?: string;
+  formule_id?: string;
 }
 
 Deno.serve(async (req: Request) => {
@@ -34,7 +35,7 @@ Deno.serve(async (req: Request) => {
 
   try {
     const requestBody: PaymentRequest = await req.json();
-    const { customer_name, currency, country, amount, transaction_id, msisdn, payment_type, user_id, abonnement_id } = requestBody;
+    const { customer_name, currency, country, amount, transaction_id, msisdn, payment_type, user_id, abonnement_id, formule_id } = requestBody;
 
     if (!customer_name || !currency || !country || !amount || !transaction_id || !payment_type) {
       return new Response(
@@ -120,16 +121,21 @@ Deno.serve(async (req: Request) => {
     let paiementId: string | null = null;
 
     if (user_id) {
+      const expiresAt = new Date();
+      expiresAt.setMinutes(expiresAt.getMinutes() + 30);
+
       const paiementData: any = {
         user_id,
         abonnement_id,
+        formule_id,
         montant_fcfa: amount,
         methode_paiement: `iPayMoney-${payment_type}`,
         ipay_transaction_id: transaction_id,
-        ipay_reference: responseData.reference || null,
+        reference_transaction: responseData.reference || transaction_id,
         ipay_status: responseData.status || null,
         country_code: country,
         currency,
+        expires_at: expiresAt.toISOString(),
         statut: ipayResponse.ok ? "en_attente" : "echoue",
         notes: `Payment via iPayMoney (${payment_type}) - ${responseData.status || 'initiated'}`,
       };

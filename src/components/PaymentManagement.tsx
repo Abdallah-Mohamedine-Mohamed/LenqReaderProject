@@ -63,27 +63,20 @@ export function PaymentManagement() {
     if (!confirm('Confirmer ce paiement?')) return;
 
     try {
-      const { error } = await supabase
-        .from('paiements')
-        .update({
-          statut: 'confirme',
-          confirme_par: user?.id,
-        })
-        .eq('id', paiementId);
+      const { data, error } = await supabase.rpc('confirm_payment_secure', {
+        p_payment_id: paiementId,
+        p_confirmed_by: user?.id,
+        p_notes: 'Confirmation manuelle par administrateur',
+      });
 
       if (error) throw error;
 
-      if (abonnementId) {
-        const { error: abonnementError } = await supabase
-          .from('abonnements')
-          .update({ statut: 'actif' })
-          .eq('id', abonnementId);
-
-        if (abonnementError) console.error('Error updating subscription:', abonnementError);
+      if (data && data.success) {
+        await loadPaiements();
+        alert(`Paiement confirmé avec succès. Abonnement valide jusqu'au ${new Date(data.new_end_date).toLocaleDateString('fr-FR')}`);
+      } else {
+        alert(data?.error || 'Erreur lors de la confirmation');
       }
-
-      await loadPaiements();
-      alert('Paiement confirmé avec succès');
     } catch (error) {
       console.error('Error confirming payment:', error);
       alert('Erreur lors de la confirmation');
@@ -371,51 +364,69 @@ function AddPaymentModal({ onClose, onSuccess, adminId }: AddPaymentModalProps) 
       const formule = formules.find(f => f.id === selectedFormule);
       if (!formule) throw new Error('Formule introuvable');
 
-      const dateDebut = new Date();
-      const dateFin = new Date();
-      dateFin.setDate(dateFin.getDate() + formule.duree_jours);
-
-      const { data: abonnement, error: abonnementError } = await supabase
+      const { data: existingSubscription } = await supabase
         .from('abonnements')
+        .select('id, date_fin, statut')
+        .eq('user_id', selectedUser)
+        .eq('statut', 'actif')
+        .maybeSingle();
+
+      let abonnementId = existingSubscription?.id;
+
+      if (!abonnementId) {
+        const dateDebut = new Date();
+        const dateFin = new Date();
+        dateFin.setDate(dateFin.getDate() + formule.duree_jours);
+
+        const { data: newAbonnement, error: abonnementError } = await supabase
+          .from('abonnements')
+          .insert({
+            user_id: selectedUser,
+            formule_id: selectedFormule,
+            date_debut: dateDebut.toISOString(),
+            date_fin: dateFin.toISOString(),
+            statut: 'en_attente',
+            duration_days: formule.duree_jours,
+          })
+          .select()
+          .single();
+
+        if (abonnementError) throw abonnementError;
+        abonnementId = newAbonnement.id;
+      }
+
+      const { data: newPayment, error: paiementError } = await supabase
+        .from('paiements')
         .insert({
           user_id: selectedUser,
+          abonnement_id: abonnementId,
           formule_id: selectedFormule,
-          date_debut: dateDebut.toISOString(),
-          date_fin: dateFin.toISOString(),
-          statut: 'actif',
+          montant_fcfa: parseInt(montant),
+          methode_paiement: methode,
+          reference_transaction: reference || null,
+          statut: 'en_attente',
+          notes,
+          currency: 'XOF',
         })
         .select()
         .single();
 
-      if (abonnementError) throw abonnementError;
-
-      const { error: paiementError } = await supabase
-        .from('paiements')
-        .insert({
-          user_id: selectedUser,
-          abonnement_id: abonnement.id,
-          montant_fcfa: parseInt(montant),
-          methode_paiement: methode,
-          reference_transaction: reference || null,
-          statut: 'confirme',
-          notes,
-          confirme_par: adminId,
-        });
-
       if (paiementError) throw paiementError;
 
-      const { error: userError } = await supabase
-        .from('users')
-        .update({
-          statut_abonnement: 'actif',
-          date_fin_abonnement: dateFin.toISOString(),
-        })
-        .eq('id', selectedUser);
+      const { data: confirmResult, error: confirmError } = await supabase.rpc('confirm_payment_secure', {
+        p_payment_id: newPayment.id,
+        p_confirmed_by: adminId,
+        p_notes: `Manual payment - ${methode}${reference ? ` - Ref: ${reference}` : ''}${notes ? ` - ${notes}` : ''}`,
+      });
 
-      if (userError) throw userError;
+      if (confirmError) throw confirmError;
 
-      alert('Paiement enregistré et abonnement activé avec succès!');
-      onSuccess();
+      if (confirmResult && confirmResult.success) {
+        alert(`Paiement enregistré avec succès! Abonnement valide jusqu'au ${new Date(confirmResult.new_end_date).toLocaleDateString('fr-FR')}`);
+        onSuccess();
+      } else {
+        throw new Error(confirmResult?.error || 'Erreur lors de la confirmation');
+      }
     } catch (error) {
       console.error('Error creating payment:', error);
       alert('Erreur lors de l\'enregistrement du paiement');

@@ -50,7 +50,8 @@ export async function initiatePayment(
   paymentType: PaymentType,
   userId: string,
   abonnementId: string,
-  msisdn?: string
+  msisdn?: string,
+  formuleId?: string
 ): Promise<PaymentResponse> {
   try {
     if ((paymentType === 'mobile' || paymentType === 'sta') && !msisdn) {
@@ -82,6 +83,7 @@ export async function initiatePayment(
         payment_type: paymentType,
         user_id: userId,
         abonnement_id: abonnementId,
+        formule_id: formuleId,
       }),
     });
 

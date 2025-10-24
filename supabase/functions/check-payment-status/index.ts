@@ -103,33 +103,35 @@ Deno.serve(async (req: Request) => {
     }
 
     if (paiement && responseData.status) {
-      let newStatut = paiement.statut;
-      
-      if (responseData.status === "succeeded") {
-        newStatut = "confirme";
-      } else if (responseData.status === "failed") {
-        newStatut = "echoue";
-      }
+      if ((responseData.status === "succeeded" || responseData.status === "paid" || responseData.status === "completed") && paiement.statut !== "confirme") {
+        const { data: confirmResult, error: confirmError } = await supabase.rpc(
+          'confirm_payment_secure',
+          {
+            p_payment_id: paiement.id,
+            p_ipay_transaction_id: responseData.transaction_id || reference,
+            p_ipay_status: responseData.status,
+            p_notes: 'Auto-confirmed via check-payment-status',
+          }
+        );
 
-      await supabase
-        .from("paiements")
-        .update({
-          ipay_status: responseData.status,
-          statut: newStatut,
-          last_status_check: new Date().toISOString(),
-        })
-        .eq("id", paiement.id);
-
-      if (responseData.status === "succeeded" && paiement.abonnement_id) {
+        if (confirmError) {
+          console.error('Failed to confirm payment:', confirmError);
+        }
+      } else if (responseData.status === "failed" || responseData.status === "cancelled" || responseData.status === "expired") {
         await supabase
-          .from("abonnements")
-          .update({ statut: "actif" })
-          .eq("id", paiement.abonnement_id);
-
+          .from("paiements")
+          .update({
+            ipay_status: responseData.status,
+            statut: "echoue",
+          })
+          .eq("id", paiement.id);
+      } else {
         await supabase
-          .from("users")
-          .update({ statut_abonnement: "actif" })
-          .eq("id", paiement.user_id);
+          .from("paiements")
+          .update({
+            ipay_status: responseData.status,
+          })
+          .eq("id", paiement.id);
       }
     }
 

@@ -203,6 +203,7 @@ export function SubscriptionForm() {
         setSuccess(true);
         setTimeout(() => navigate('/login'), 2500);
       } else {
+        // Create pending subscription without fixed dates (calculated on payment confirmation)
         const { data: abonnementData, error: abonnementError } = await supabase
           .from('abonnements')
           .insert({
@@ -211,6 +212,7 @@ export function SubscriptionForm() {
             date_debut: dateDebut.toISOString(),
             date_fin: dateFin.toISOString(),
             statut: 'en_attente',
+            duration_days: formule!.duree_jours,
             renouvellement_auto: false,
           })
           .select()
@@ -243,7 +245,8 @@ export function SubscriptionForm() {
         paymentType,
         tempUserId,
         abonnementId,
-        msisdn
+        msisdn,
+        formule.id
       );
 
       if (!paymentResult.success) {
@@ -280,13 +283,20 @@ export function SubscriptionForm() {
         return;
       }
 
+      const expiresAt = new Date();
+      expiresAt.setMinutes(expiresAt.getMinutes() + 30);
+
       const { data: paiementData } = await supabase
         .from('paiements')
         .insert({
           user_id: tempUserId,
           abonnement_id: abonnementId,
+          formule_id: formule.id,
           montant_fcfa: formule.prix_fcfa,
           methode_paiement: 'iPayMoney-external',
+          currency: 'XOF',
+          country_code: formData.country_code,
+          expires_at: expiresAt.toISOString(),
           statut: 'en_attente',
           notes: `External payment initiated - ${new Date().toISOString()}`,
         })

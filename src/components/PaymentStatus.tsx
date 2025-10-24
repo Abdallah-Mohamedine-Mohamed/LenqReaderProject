@@ -70,15 +70,34 @@ export function PaymentStatus() {
 
     setCheckCount(prev => prev + 1);
 
-    const result = await checkPaymentStatus(reference!);
-    if (result) {
-      setStatus(result.status);
+    try {
+      const apiUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/check-payment-status`;
+      const response = await fetch(apiUrl, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ reference }),
+      });
 
-      if (result.status === 'succeeded') {
-        setTimeout(() => {
-          navigate('/login');
-        }, 3000);
+      if (response.ok) {
+        const result = await response.json();
+        if (result.success && result.data) {
+          const newStatus = result.data.status;
+          setStatus(newStatus);
+
+          await loadPaymentData();
+
+          if (newStatus === 'succeeded' || newStatus === 'paid') {
+            setTimeout(() => {
+              navigate('/login');
+            }, 3000);
+          }
+        }
       }
+    } catch (err) {
+      console.error('Error checking payment status:', err);
     }
   };
 
