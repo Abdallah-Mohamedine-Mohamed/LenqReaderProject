@@ -41,49 +41,36 @@ export function IPayCheckout({
       const txnId = generateTransactionId();
       setTransactionId(txnId);
 
-      const expiresAt = new Date();
-      expiresAt.setMinutes(expiresAt.getMinutes() + 30);
+      const apiUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/create-payment`;
 
-      const { data: payment, error: paymentError } = await supabase
-        .from('paiements')
-        .insert({
+      const response = await fetch(apiUrl, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
           user_id: userId,
           abonnement_id: abonnementId,
           formule_id: formuleId,
-          montant_fcfa: amount,
-          methode_paiement: 'iPayMoney-SDK',
-          reference_transaction: txnId,
-          ipay_transaction_id: txnId,
-          statut: 'en_attente',
-          currency: 'XOF',
-          country_code: 'BJ',
-          expires_at: expiresAt.toISOString(),
-          notes: 'Payment via iPay SDK',
-        })
-        .select()
-        .single();
-
-      if (paymentError) throw paymentError;
-
-      setPaymentId(payment.id);
-
-      await supabase.from('payment_events').insert({
-        payment_id: payment.id,
-        user_id: userId,
-        event_type: 'created',
-        old_status: null,
-        new_status: 'en_attente',
-        metadata: {
+          amount: amount,
           transaction_id: txnId,
-          method: 'iPay SDK',
-        },
-        notes: 'Payment created via iPay SDK',
+        }),
       });
 
-      renderIPayButton(txnId, payment.id);
+      const result = await response.json();
+
+      if (!response.ok || !result.success) {
+        console.error('Payment creation error:', result);
+        throw new Error(result.message || 'Impossible de créer le paiement');
+      }
+
+      setPaymentId(result.payment_id);
+      renderIPayButton(txnId, result.payment_id);
     } catch (error) {
       console.error('Error initializing payment:', error);
-      onError?.('Erreur lors de l\'initialisation du paiement');
+      const errorMessage = error instanceof Error ? error.message : 'Erreur lors de l\'initialisation du paiement';
+      onError?.(errorMessage);
     } finally {
       setLoading(false);
     }
