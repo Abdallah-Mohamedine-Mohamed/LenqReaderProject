@@ -4,6 +4,12 @@ import { Loader } from 'lucide-react';
 
 const IPAY_PUBLIC_KEY = 'pk_0ac56b86849d4fdca1e44df11a7328e0';
 
+declare global {
+  interface Window {
+    iPayCheckoutInit?: () => void;
+  }
+}
+
 interface IPayCheckoutProps {
   amount: number;
   userId: string;
@@ -24,7 +30,8 @@ export function IPayCheckout({
   const [loading, setLoading] = useState(true);
   const [paymentId, setPaymentId] = useState<string | null>(null);
   const [transactionId, setTransactionId] = useState<string>('');
-  const buttonRef = useRef<HTMLButtonElement>(null);
+  const [sdkReady, setSdkReady] = useState(false);
+  const buttonContainerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     initializePayment();
@@ -63,24 +70,32 @@ export function IPayCheckout({
   }, [paymentId, transactionId]);
 
   useEffect(() => {
-    if (buttonRef.current && paymentId && transactionId) {
-      console.log('🔘 Button ref ready, attempting to trigger iPay SDK');
+    if (paymentId && transactionId && buttonContainerRef.current) {
+      const checkSDK = setInterval(() => {
+        if (typeof window !== 'undefined' && (window as any).iPayCheckoutInit) {
+          console.log('✅ iPay SDK detected, initializing...');
+          clearInterval(checkSDK);
+          setSdkReady(true);
 
-      const checkAndLog = () => {
-        console.log('🔍 Button attributes:', {
-          amount: buttonRef.current?.getAttribute('data-amount'),
-          env: buttonRef.current?.getAttribute('data-environement'),
-          key: buttonRef.current?.getAttribute('data-key'),
-          txnId: buttonRef.current?.getAttribute('data-transaction-id'),
-          hasClass: buttonRef.current?.classList.contains('ipaymoney-button'),
-        });
-      };
+          try {
+            (window as any).iPayCheckoutInit();
+            console.log('✅ iPay SDK initialized');
+          } catch (error) {
+            console.error('❌ Error initializing iPay SDK:', error);
+          }
+        }
+      }, 100);
 
-      setTimeout(checkAndLog, 100);
-      setTimeout(checkAndLog, 500);
-      setTimeout(checkAndLog, 1000);
+      setTimeout(() => {
+        clearInterval(checkSDK);
+        if (!sdkReady) {
+          console.warn('⚠️ iPay SDK not detected after 5 seconds');
+        }
+      }, 5000);
+
+      return () => clearInterval(checkSDK);
     }
-  }, [buttonRef.current, paymentId, transactionId]);
+  }, [paymentId, transactionId]);
 
   const generateTransactionId = () => {
     const timestamp = Date.now();
@@ -141,21 +156,6 @@ export function IPayCheckout({
     }
   };
 
-  const handleManualPayment = () => {
-    if (!paymentId || !transactionId) {
-      console.error('❌ Missing payment data');
-      return;
-    }
-
-    const redirectUrl = `${window.location.origin}/payment-status?payment_id=${paymentId}&reference=${transactionId}`;
-    const callbackUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/ipay-webhook`;
-
-    const paymentUrl = `https://i-pay.money/checkout?amount=${amount}&key=${IPAY_PUBLIC_KEY}&transaction_id=${transactionId}&redirect_url=${encodeURIComponent(redirectUrl)}&callback_url=${encodeURIComponent(callbackUrl)}`;
-
-    console.log('🔗 Opening iPay manually:', paymentUrl);
-    window.location.href = paymentUrl;
-  };
-
   if (loading) {
     return (
       <div className="flex items-center justify-center py-8">
@@ -178,20 +178,20 @@ export function IPayCheckout({
 
   return (
     <div className="space-y-4">
-      <button
-        ref={buttonRef}
-        type="button"
-        className="ipaymoney-button w-full bg-gradient-to-r from-amber-500 to-yellow-600 text-black font-bold py-4 px-6 rounded-lg hover:from-amber-600 hover:to-yellow-700 transition-all transform hover:scale-105 shadow-lg"
-        data-amount={amount.toString()}
-        data-environement="live"
-        data-key={IPAY_PUBLIC_KEY}
-        data-transaction-id={transactionId}
-        data-redirect-url={redirectUrl}
-        data-callback-url={callbackUrl}
-        onClick={handleManualPayment}
-      >
-        Payer {amount.toLocaleString()} FCFA
-      </button>
+      <div ref={buttonContainerRef}>
+        <button
+          type="button"
+          className="ipaymoney-button w-full bg-gradient-to-r from-amber-500 to-yellow-600 text-black font-bold py-4 px-6 rounded-lg hover:from-amber-600 hover:to-yellow-700 transition-all transform hover:scale-105 shadow-lg"
+          data-amount={amount.toString()}
+          data-environement="live"
+          data-key={IPAY_PUBLIC_KEY}
+          data-transaction-id={transactionId}
+          data-redirect-url={redirectUrl}
+          data-callback-url={callbackUrl}
+        >
+          Payer {amount.toLocaleString()} FCFA
+        </button>
+      </div>
 
       <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg p-4">
         <p className="text-amber-300 text-sm mb-2">
@@ -199,10 +199,10 @@ export function IPayCheckout({
         </p>
         <ul className="text-gray-300 text-sm space-y-1 list-disc list-inside">
           <li>Cliquez sur le bouton orange ci-dessus pour effectuer le paiement</li>
-          <li>Vous serez redirigé vers la page de paiement sécurisée iPay</li>
+          <li>Une fenêtre de paiement sécurisée iPay s'ouvrira</li>
           <li>Choisissez votre mode de paiement (Mobile Money, Carte bancaire, etc.)</li>
           <li>Suivez les instructions pour compléter le paiement</li>
-          <li>Restez sur la page de paiement jusqu'à la confirmation</li>
+          <li>Ne fermez pas cette page pendant le paiement</li>
           <li>Vous serez redirigé automatiquement après le paiement</li>
         </ul>
       </div>
@@ -211,6 +211,11 @@ export function IPayCheckout({
         <p className="text-gray-400 text-xs">
           Référence de transaction: <span className="font-mono text-gray-300">{transactionId}</span>
         </p>
+        {!sdkReady && (
+          <p className="text-yellow-500 text-xs mt-2">
+            Chargement du système de paiement...
+          </p>
+        )}
       </div>
     </div>
   );
