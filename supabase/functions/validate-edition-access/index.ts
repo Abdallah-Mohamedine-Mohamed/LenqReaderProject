@@ -213,20 +213,22 @@ Deno.serve(async (req: Request) => {
       .select(`
         id,
         titre,
+        pdf_url,
         pages(id, page_number, image_url),
         articles(id, titre, ordre_lecture)
       `)
       .eq("pdf_url", pdfData.url_fichier)
-      .eq("statut", "published")
+      .in("statut", ["published", "ready"])
       .maybeSingle();
 
-    if (editionData) {
+    if (editionData && editionData.articles && editionData.articles.length > 0) {
       return new Response(
         JSON.stringify({
           valid: true,
           hasArticles: true,
           editionId: editionData.id,
           editionTitle: editionData.titre,
+          pdfUrl: editionData.pdf_url || pdfData.url_fichier,
           userId: userData.id,
           userName: userData.nom,
           userNumber: userData.numero_abonne,

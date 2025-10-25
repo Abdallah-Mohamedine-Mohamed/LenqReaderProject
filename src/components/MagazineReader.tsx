@@ -1,7 +1,10 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { X, ChevronLeft, ChevronRight, BookOpen, Clock, Bookmark, BookmarkCheck, List, Grid, Maximize, Type, Settings, Eye } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import type { Edition, Page, Article } from '../lib/supabase';
+import * as pdfjsLib from 'pdfjs-dist';
+
+pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs';
 
 interface MagazineReaderProps {
   editionId: string;
@@ -21,6 +24,10 @@ export function MagazineReader({ editionId, userId }: MagazineReaderProps) {
   const [fontSize, setFontSize] = useState(18);
   const [lineHeight, setLineHeight] = useState(1.8);
   const [showSettings, setShowSettings] = useState(false);
+  const [pdfDoc, setPdfDoc] = useState<any>(null);
+  const [pdfUrl, setPdfUrl] = useState<string | null>(null);
+  const [renderingPages, setRenderingPages] = useState<Set<number>>(new Set());
+  const canvasRefs = useRef<Map<number, HTMLCanvasElement>>(new Map());
 
   useEffect(() => {
     loadEditionData();
@@ -55,10 +62,61 @@ export function MagazineReader({ editionId, userId }: MagazineReaderProps) {
 
       if (articlesError) throw articlesError;
       setArticles(articlesData || []);
+
+      if (editionData?.pdf_url) {
+        const { data: { publicUrl } } = supabase.storage
+          .from('editions')
+          .getPublicUrl(editionData.pdf_url);
+
+        setPdfUrl(publicUrl);
+        await loadPDF(publicUrl);
+      }
     } catch (error) {
       console.error('Error loading edition:', error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadPDF = async (url: string) => {
+    try {
+      const loadingTask = pdfjsLib.getDocument(url);
+      const pdf = await loadingTask.promise;
+      setPdfDoc(pdf);
+    } catch (error) {
+      console.error('Error loading PDF:', error);
+    }
+  };
+
+  const renderPageToCanvas = async (pageNumber: number, canvas: HTMLCanvasElement) => {
+    if (!pdfDoc || renderingPages.has(pageNumber)) return;
+
+    setRenderingPages(prev => new Set(prev).add(pageNumber));
+
+    try {
+      const page = await pdfDoc.getPage(pageNumber);
+      const viewport = page.getViewport({ scale: 2 });
+
+      canvas.width = viewport.width;
+      canvas.height = viewport.height;
+      canvas.style.width = '100%';
+      canvas.style.height = 'auto';
+
+      const context = canvas.getContext('2d');
+      if (!context) return;
+
+      await page.render({
+        canvasContext: context,
+        viewport
+      }).promise;
+    } catch (error) {
+      console.error(`Error rendering page ${pageNumber}:`, error);
+    } finally {
+      setRenderingPages(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(pageNumber);
+        return newSet;
+      });
     }
   };
 
@@ -294,6 +352,16 @@ export function MagazineReader({ editionId, userId }: MagazineReaderProps) {
                   <img
                     src={currentPage.image_url}
                     alt={`Page ${currentPage.page_number}`}
+                    className="w-full h-auto"
+                  />
+                ) : pdfDoc ? (
+                  <canvas
+                    ref={(canvas) => {
+                      if (canvas && !canvasRefs.current.has(currentPage.page_number)) {
+                        canvasRefs.current.set(currentPage.page_number, canvas);
+                        renderPageToCanvas(currentPage.page_number, canvas);
+                      }
+                    }}
                     className="w-full h-auto"
                   />
                 ) : (
