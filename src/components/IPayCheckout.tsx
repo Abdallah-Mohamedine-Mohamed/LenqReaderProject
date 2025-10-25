@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { supabase } from '../lib/supabase';
 import { Loader } from 'lucide-react';
 
@@ -24,8 +24,7 @@ export function IPayCheckout({
   const [loading, setLoading] = useState(true);
   const [paymentId, setPaymentId] = useState<string | null>(null);
   const [transactionId, setTransactionId] = useState<string>('');
-  const [redirectUrl, setRedirectUrl] = useState<string>('');
-  const [callbackUrl, setCallbackUrl] = useState<string>('');
+  const buttonRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     initializePayment();
@@ -46,6 +45,7 @@ export function IPayCheckout({
           (payload) => {
             if (payload.new && 'statut' in payload.new) {
               const status = payload.new.statut as string;
+              console.log('📢 Payment status update:', status);
               if (status === 'confirme') {
                 onSuccess?.(paymentId);
               } else if (status === 'echoue') {
@@ -62,6 +62,26 @@ export function IPayCheckout({
     }
   }, [paymentId, transactionId]);
 
+  useEffect(() => {
+    if (buttonRef.current && paymentId && transactionId) {
+      console.log('🔘 Button ref ready, attempting to trigger iPay SDK');
+
+      const checkAndLog = () => {
+        console.log('🔍 Button attributes:', {
+          amount: buttonRef.current?.getAttribute('data-amount'),
+          env: buttonRef.current?.getAttribute('data-environement'),
+          key: buttonRef.current?.getAttribute('data-key'),
+          txnId: buttonRef.current?.getAttribute('data-transaction-id'),
+          hasClass: buttonRef.current?.classList.contains('ipaymoney-button'),
+        });
+      };
+
+      setTimeout(checkAndLog, 100);
+      setTimeout(checkAndLog, 500);
+      setTimeout(checkAndLog, 1000);
+    }
+  }, [buttonRef.current, paymentId, transactionId]);
+
   const generateTransactionId = () => {
     const timestamp = Date.now();
     const random = Math.random().toString(36).substring(2, 8).toUpperCase();
@@ -74,6 +94,14 @@ export function IPayCheckout({
       setTransactionId(txnId);
 
       const apiUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/create-payment`;
+
+      console.log('💳 Creating payment with:', {
+        user_id: userId,
+        abonnement_id: abonnementId,
+        formule_id: formuleId,
+        amount: amount,
+        transaction_id: txnId,
+      });
 
       const response = await fetch(apiUrl, {
         method: 'POST',
@@ -93,32 +121,39 @@ export function IPayCheckout({
       const result = await response.json();
 
       if (!response.ok || !result.success) {
-        console.error('Payment creation error:', result);
+        console.error('❌ Payment creation error:', result);
         throw new Error(result.message || 'Impossible de créer le paiement');
       }
 
       setPaymentId(result.payment_id);
 
-      const redUrl = `${window.location.origin}/payment-status?payment_id=${result.payment_id}&reference=${txnId}`;
-      const cbUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/ipay-webhook`;
-
-      setRedirectUrl(redUrl);
-      setCallbackUrl(cbUrl);
-
       console.log('✅ Payment initialized:', {
         paymentId: result.payment_id,
         transactionId: txnId,
         amount,
-        redirectUrl: redUrl,
-        callbackUrl: cbUrl,
       });
     } catch (error) {
-      console.error('Error initializing payment:', error);
+      console.error('❌ Error initializing payment:', error);
       const errorMessage = error instanceof Error ? error.message : 'Erreur lors de l\'initialisation du paiement';
       onError?.(errorMessage);
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleManualPayment = () => {
+    if (!paymentId || !transactionId) {
+      console.error('❌ Missing payment data');
+      return;
+    }
+
+    const redirectUrl = `${window.location.origin}/payment-status?payment_id=${paymentId}&reference=${transactionId}`;
+    const callbackUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/ipay-webhook`;
+
+    const paymentUrl = `https://i-pay.money/checkout?amount=${amount}&key=${IPAY_PUBLIC_KEY}&transaction_id=${transactionId}&redirect_url=${encodeURIComponent(redirectUrl)}&callback_url=${encodeURIComponent(callbackUrl)}`;
+
+    console.log('🔗 Opening iPay manually:', paymentUrl);
+    window.location.href = paymentUrl;
   };
 
   if (loading) {
@@ -138,9 +173,13 @@ export function IPayCheckout({
     );
   }
 
+  const redirectUrl = `${window.location.origin}/payment-status?payment_id=${paymentId}&reference=${transactionId}`;
+  const callbackUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/ipay-webhook`;
+
   return (
     <div className="space-y-4">
       <button
+        ref={buttonRef}
         type="button"
         className="ipaymoney-button w-full bg-gradient-to-r from-amber-500 to-yellow-600 text-black font-bold py-4 px-6 rounded-lg hover:from-amber-600 hover:to-yellow-700 transition-all transform hover:scale-105 shadow-lg"
         data-amount={amount.toString()}
@@ -149,6 +188,7 @@ export function IPayCheckout({
         data-transaction-id={transactionId}
         data-redirect-url={redirectUrl}
         data-callback-url={callbackUrl}
+        onClick={handleManualPayment}
       >
         Payer {amount.toLocaleString()} FCFA
       </button>
@@ -159,6 +199,7 @@ export function IPayCheckout({
         </p>
         <ul className="text-gray-300 text-sm space-y-1 list-disc list-inside">
           <li>Cliquez sur le bouton orange ci-dessus pour effectuer le paiement</li>
+          <li>Vous serez redirigé vers la page de paiement sécurisée iPay</li>
           <li>Choisissez votre mode de paiement (Mobile Money, Carte bancaire, etc.)</li>
           <li>Suivez les instructions pour compléter le paiement</li>
           <li>Restez sur la page de paiement jusqu'à la confirmation</li>
