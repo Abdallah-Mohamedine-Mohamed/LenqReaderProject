@@ -220,6 +220,8 @@ export function ModernPDFReader({ token, initialData }: ModernPDFReaderProps) {
  const [rotation, setRotation] = useState(0);
  const [isFullscreen, setIsFullscreen] = useState(false);
  const [sessionId, setSessionId] = useState('');
+ const [showMobileControls, setShowMobileControls] = useState(true);
+ const hideControlsTimeoutRef = useRef<NodeJS.Timeout>();
  const isRenderingRef = useRef(false);
  const pendingRenderRef = useRef<{ page: number; rotation: number; scale: number } | null>(null);
  const [pdfReady, setPdfReady] = useState(false);
@@ -286,8 +288,38 @@ useEffect(() => {
     setIsMobile(window.innerWidth < 768);
   };
   window.addEventListener('resize', handleResize);
-  return () => window.removeEventListener('resize', handleResize);
+  return () => {
+    window.removeEventListener('resize', handleResize);
+    if (hideControlsTimeoutRef.current) {
+      clearTimeout(hideControlsTimeoutRef.current);
+    }
+  };
 }, []);
+
+const startHideControlsTimer = useCallback(() => {
+  if (hideControlsTimeoutRef.current) {
+    clearTimeout(hideControlsTimeoutRef.current);
+  }
+  hideControlsTimeoutRef.current = setTimeout(() => {
+    if (isMobile) {
+      setShowMobileControls(false);
+    }
+  }, 3000);
+}, [isMobile]);
+
+const handleMobileInteraction = useCallback(() => {
+  if (isMobile) {
+    setShowMobileControls(true);
+    startHideControlsTimer();
+  }
+}, [isMobile, startHideControlsTimer]);
+
+useEffect(() => {
+  if (isMobile && viewMode === 'pdf') {
+    setShowMobileControls(true);
+    startHideControlsTimer();
+  }
+}, [isMobile, viewMode, currentPage, startHideControlsTimer]);
 
  const spreadConfig = useMemo(() => {
   const groups: number[] = [];
@@ -297,7 +329,8 @@ useEffect(() => {
    return { groups, doubleStarts };
   }
 
-  if (!isSpreadMode) {
+  // IMPORTANT: Désactiver le spread mode sur mobile
+  if (!isSpreadMode || isMobile) {
    for (let page = 1; page <= totalPages; page += 1) {
     groups.push(page);
    }
@@ -329,7 +362,7 @@ useEffect(() => {
   }
 
   return { groups, doubleStarts };
- }, [isSpreadMode, totalPages]);
+ }, [isSpreadMode, totalPages, isMobile]);
 
  const spreadGroups = spreadConfig.groups;
  const spreadDoubleStarts = spreadConfig.doubleStarts;
@@ -357,8 +390,8 @@ const clampPage = useCallback(
 );
 
  const shouldRenderSecondPage = useCallback(
-  (pageNumber: number) => spreadDoubleStarts.has(pageNumber),
-  [spreadDoubleStarts]
+  (pageNumber: number) => !isMobile && spreadDoubleStarts.has(pageNumber),
+  [spreadDoubleStarts, isMobile]
  );
 
 const setCurrentPage = useCallback(
@@ -1090,10 +1123,11 @@ const renderPage = useCallback(
    return;
   }
 
-  const containerWidth = containerRef.current?.clientWidth ?? window.innerWidth - 32;
-  const containerHeight = window.innerHeight - (isMobile ? 140 : 180);
+  const containerWidth = containerRef.current?.clientWidth ?? (isMobile ? window.innerWidth : window.innerWidth - 32);
+  const containerHeight = window.innerHeight - (isMobile ? 120 : 180);
   const pagesToRender: number[] = [pageNumber];
-  if (isSpreadMode && shouldRenderSecondPage(pageNumber)) {
+  // Sur mobile, toujours 1 seule page
+  if (!isMobile && isSpreadMode && shouldRenderSecondPage(pageNumber)) {
    pagesToRender.push(pageNumber + 1);
   }
 
@@ -1496,7 +1530,9 @@ const articleView = (() => {
     onTouchMove={handleTouchMove}
     onTouchEnd={handleTouchEnd}
    >
-   <header className="fixed top-0 left-0 right-0 z-40 bg-[#ffffff] border-b border-[#dfe5f2] shadow-sm">
+   <header className={`fixed top-0 left-0 right-0 z-40 bg-[#ffffff]/95 backdrop-blur-md border-b border-[#dfe5f2] shadow-sm transition-transform duration-300 ${
+    isMobile && !showMobileControls ? '-translate-y-full' : 'translate-y-0'
+   }`}>
     <div className="max-w-6xl mx-auto h-14 md:h-16 px-3 md:px-4 lg:px-6 flex items-center justify-between">
      <div className="flex items-center gap-4">
       <button
@@ -1575,8 +1611,11 @@ const articleView = (() => {
     </div>
    </header>
 
-   <main className={`flex-1 w-full relative ${isMobile ? 'pt-16 pb-0' : 'pt-24 pb-20'} ${isMobile ? 'px-0' : 'px-4'}`}>
-    <div className="relative max-w-5xl mx-auto flex items-center justify-center">
+   <main
+     className={`flex-1 w-full relative ${isMobile ? 'pt-0 pb-0 min-h-screen' : 'pt-24 pb-20'} ${isMobile ? 'px-0' : 'px-4'}`}
+     onClick={isMobile ? handleMobileInteraction : undefined}
+   >
+    <div className={`relative ${isMobile ? 'w-full h-screen' : 'max-w-5xl mx-auto'} flex items-center justify-center`}>
      {hasPreviousPage && !isMobile && (
       <button
        type="button"
@@ -1591,11 +1630,16 @@ const articleView = (() => {
       </button>
      )}
 
-     <div className={`relative ${isMobile ? 'border-0' : 'border border-[#dfe5f2]'} bg-white ${isMobile ? 'shadow-none' : 'shadow-[0_30px_80px_-35px_rgba(15,31,64,0.6)]'}`}>
+     <div className={`relative ${isMobile ? 'border-0 w-full' : 'border border-[#dfe5f2]'} bg-white ${isMobile ? 'shadow-none' : 'shadow-[0_30px_80px_-35px_rgba(15,31,64,0.6)]'}`}>
      <canvas
       ref={canvasRef}
-      className="block max-w-full h-auto transition-transform duration-300"
-      style={{ backgroundColor: '#ffffff', width: isMobile ? '100vw' : 'auto' }}
+      className={`block transition-transform duration-300 ${isMobile ? 'w-full' : 'max-w-full'}`}
+      style={{
+        backgroundColor: '#ffffff',
+        width: isMobile ? '100%' : 'auto',
+        height: isMobile ? 'auto' : 'auto',
+        display: 'block'
+      }}
      />
      {!pdfReady && (
       <div className="absolute inset-0 flex items-center justify-center bg-white/85 backdrop-blur-[1px]">
@@ -1607,7 +1651,7 @@ const articleView = (() => {
      )}
 
       {viewMode === 'pdf' &&
-       (isSpreadMode ? hotspotsForSpread : hotspotsForCurrentPage).map((hotspot) => {
+       (isMobile ? hotspotsForCurrentPage : (isSpreadMode ? hotspotsForSpread : hotspotsForCurrentPage)).map((hotspot) => {
         const spreadOffset = (hotspot as { spreadOffset?: number }).spreadOffset ?? 0;
         const pageWidthPercent = 100 / Math.max(1, spreadSlotCount);
         const leftPercent = spreadOffset * pageWidthPercent + clamp01(hotspot.x) * pageWidthPercent;
@@ -1621,15 +1665,32 @@ const articleView = (() => {
            event.stopPropagation();
            handleHotspotClick(hotspot);
           }}
-          className="absolute border border-transparent bg-[#1f3b63]/0 hover:bg-[#1f3b63]/10 focus-visible:bg-[#1f3b63]/12 rounded-lg transition-colors duration-200"
+          onTouchEnd={(event) => {
+           event.preventDefault();
+           event.stopPropagation();
+           handleHotspotClick(hotspot);
+          }}
+          className={`absolute border-2 transition-all duration-200 ${
+            isMobile
+              ? 'border-blue-400/40 bg-blue-500/5 active:bg-blue-500/20 active:border-blue-500'
+              : 'border-transparent bg-[#1f3b63]/0 hover:bg-[#1f3b63]/10 hover:border-[#1f3b63]/30'
+          } rounded-lg`}
           style={{
            left: `${leftPercent}%`,
            top: `${clamp01(hotspot.y) * 100}%`,
            width: `${widthPercent}%`,
            height: `${clamp01(hotspot.height) * 100}%`,
+           touchAction: 'manipulation'
           }}
           title={hotspot.titre}
          >
+          {isMobile && (
+            <div className="absolute inset-0 flex items-center justify-center opacity-0 hover:opacity-100 active:opacity-100 transition-opacity">
+              <span className="bg-blue-600 text-white px-2 py-1 rounded text-xs font-semibold shadow-lg">
+                {hotspot.titre}
+              </span>
+            </div>
+          )}
           <span className="sr-only">{hotspot.titre}</span>
          </button>
         );
@@ -1651,8 +1712,10 @@ const articleView = (() => {
      )}
 
      {isMobile && (
-       <div className="fixed bottom-0 left-0 right-0 z-40 bg-white border-t border-[#dfe5f2] shadow-lg">
-         <div className="flex items-center justify-between px-4 py-3">
+       <div className={`fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-md border-t border-[#dfe5f2] shadow-lg transition-transform duration-300 ${
+         !showMobileControls ? 'translate-y-full' : 'translate-y-0'
+       }`}>
+         <div className="flex items-center justify-between px-4 py-4">
            <button
              type="button"
              onClick={goToPreviousPage}
