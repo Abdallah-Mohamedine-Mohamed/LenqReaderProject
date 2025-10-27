@@ -11,6 +11,7 @@ import {
   BookOpen,
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+import { ensurePromiseWithResolvers } from '../utils/ensurePromiseWithResolvers';
 import { ArticleView } from './ArticleView';
 
 interface SecureReaderProps {
@@ -319,6 +320,7 @@ export function SecureReader({ token }: SecureReaderProps) {
   }, []);
 
   const loadPdfJs = useCallback(async () => {
+    ensurePromiseWithResolvers();
     if (pdfjsLibRef.current) {
       return pdfjsLibRef.current;
     }
@@ -794,6 +796,7 @@ const renderPDF = useCallback(async () => {
   }, [token, loadStructuredArticles, resolveSecurePdfUrl]);
 
   useEffect(() => {
+    ensurePromiseWithResolvers();
     validateToken();
   }, [validateToken]);
 
