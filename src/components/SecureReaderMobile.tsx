@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { AlertCircle, Lock, ChevronLeft, ChevronRight, Maximize, Minimize, BookOpen } from 'lucide-react';
+import { AlertCircle, Lock, ChevronLeft, ChevronRight, Maximize, Minimize, BookOpen, Smartphone, Monitor } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { ensurePromiseWithResolvers } from '../utils/ensurePromiseWithResolvers';
 import { ArticleView } from './ArticleView';
@@ -41,6 +41,8 @@ export function SecureReader({ token }: SecureReaderProps) {
   const [currentArticleIndex, setCurrentArticleIndex] = useState(0);
   const [isArticleViewOpen, setIsArticleViewOpen] = useState(false);
   const [extractingArticles, setExtractingArticles] = useState(false);
+  const [isMobile, setIsMobile] = useState(false);
+  const [touchedZone, setTouchedZone] = useState<string | null>(null);
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -53,6 +55,12 @@ export function SecureReader({ token }: SecureReaderProps) {
     validateToken();
     const newSessionId = crypto.randomUUID();
     setSessionId(newSessionId);
+
+    const checkMobile = () => {
+      setIsMobile(window.innerWidth < 768);
+    };
+    checkMobile();
+    window.addEventListener('resize', checkMobile);
 
     const preventActions = (e: Event, type: string) => {
       e.preventDefault();
@@ -93,6 +101,7 @@ export function SecureReader({ token }: SecureReaderProps) {
       document.removeEventListener('keydown', preventKeys);
       document.removeEventListener('copy', handleCopy);
       document.removeEventListener('cut', handleCopy);
+      window.removeEventListener('resize', checkMobile);
     };
   }, [token]);
 
@@ -288,8 +297,8 @@ export function SecureReader({ token }: SecureReaderProps) {
 
       if (!context) return;
 
-      const containerWidth = window.innerWidth - 24;
-      const containerHeight = window.innerHeight - 180;
+      const containerWidth = isMobile ? window.innerWidth - 32 : window.innerWidth - 24;
+      const containerHeight = isMobile ? window.innerHeight - 140 : window.innerHeight - 180;
       const viewport = page.getViewport({ scale: 1 });
 
       const scaleX = containerWidth / viewport.width;
@@ -486,33 +495,59 @@ export function SecureReader({ token }: SecureReaderProps) {
       )}
 
       <div className="fixed top-0 left-0 right-0 z-50 border-b bg-slate-900/98 border-slate-800 backdrop-blur-lg shadow-xl">
-        <div className="px-3 py-2.5">
+        <div className="px-4 py-3">
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2 min-w-0 flex-1">
-              <div className="p-1.5 bg-gradient-to-br from-amber-500 to-orange-500 rounded-lg shadow-lg flex-shrink-0">
-                <Lock className="w-4 h-4 text-white" />
-              </div>
-              <div className="min-w-0 flex-1">
-                <h1 className="text-white font-bold text-sm truncate">{tokenData?.pdfs?.titre}</h1>
-              </div>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="text-white font-semibold text-sm">{currentPage}/{totalPages}</span>
-              <button
-                onClick={toggleFullscreen}
-                className="p-2 text-gray-400 hover:text-white hover:bg-slate-700 rounded-lg transition-all bg-slate-800/50"
-              >
-                {isFullscreen ? <Minimize className="w-4 h-4" /> : <Maximize className="w-4 h-4" />}
-              </button>
-              <button
-                onClick={handleExtractArticles}
-                disabled={extractingArticles}
-                className="p-2 bg-gradient-to-r from-blue-500 to-indigo-500 hover:from-blue-600 hover:to-indigo-600 text-white rounded-lg transition-all shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
-                title="Mode Article"
-              >
-                <BookOpen className="w-4 h-4" />
-              </button>
-            </div>
+            {isMobile ? (
+              <>
+                <div className="flex items-center gap-2 min-w-0 flex-1">
+                  <div className="p-1.5 bg-gradient-to-br from-amber-500 to-orange-500 rounded-lg shadow-lg flex-shrink-0">
+                    <Smartphone className="w-4 h-4 text-white" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <h1 className="text-white font-bold text-xs truncate">{tokenData?.pdfs?.titre}</h1>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-white font-semibold text-sm">{currentPage}/{totalPages}</span>
+                  <button
+                    onClick={handleExtractArticles}
+                    disabled={extractingArticles}
+                    className="p-2 bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white rounded-lg transition-all shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
+                    title="Mode Article"
+                  >
+                    <BookOpen className="w-4 h-4" />
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="flex items-center gap-2 min-w-0 flex-1">
+                  <div className="p-1.5 bg-gradient-to-br from-amber-500 to-orange-500 rounded-lg shadow-lg flex-shrink-0">
+                    <Monitor className="w-4 h-4 text-white" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <h1 className="text-white font-bold text-sm truncate">{tokenData?.pdfs?.titre}</h1>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-white font-semibold text-sm">{currentPage}/{totalPages}</span>
+                  <button
+                    onClick={toggleFullscreen}
+                    className="p-2 text-gray-400 hover:text-white hover:bg-slate-700 rounded-lg transition-all bg-slate-800/50"
+                  >
+                    {isFullscreen ? <Minimize className="w-4 h-4" /> : <Maximize className="w-4 h-4" />}
+                  </button>
+                  <button
+                    onClick={handleExtractArticles}
+                    disabled={extractingArticles}
+                    className="p-2 bg-gradient-to-r from-blue-500 to-indigo-500 hover:from-blue-600 hover:to-indigo-600 text-white rounded-lg transition-all shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
+                    title="Mode Article"
+                  >
+                    <BookOpen className="w-4 h-4" />
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       </div>
@@ -525,41 +560,76 @@ export function SecureReader({ token }: SecureReaderProps) {
         onNavigate={(index) => setCurrentArticleIndex(index)}
       />
 
-      <div className="flex items-center justify-center min-h-screen px-3 py-16 pb-10">
+      <div className={`flex items-center justify-center min-h-screen ${isMobile ? 'px-0 py-20' : 'px-3 py-16 pb-10'}`}>
         <div className="relative w-full flex items-center justify-center">
-          <button
-            onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-            disabled={currentPage === 1}
-            className="absolute left-1 top-1/2 -translate-y-1/2 z-10 p-2.5 bg-slate-900/95 hover:bg-slate-800 text-white rounded-full disabled:opacity-20 disabled:cursor-not-allowed transition-all shadow-2xl border border-slate-700"
-          >
-            <ChevronLeft className="w-7 h-7" />
-          </button>
+          {!isMobile && (
+            <button
+              onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+              disabled={currentPage === 1}
+              className="absolute left-1 top-1/2 -translate-y-1/2 z-10 p-2.5 bg-slate-900/95 hover:bg-slate-800 text-white rounded-full disabled:opacity-20 disabled:cursor-not-allowed transition-all shadow-2xl border border-slate-700"
+            >
+              <ChevronLeft className="w-7 h-7" />
+            </button>
+          )}
 
           <canvas
             ref={canvasRef}
-            className="shadow-2xl transition-all duration-150 rounded-lg mx-auto"
+            className={`shadow-2xl transition-all duration-150 mx-auto ${isMobile ? 'rounded-none w-full' : 'rounded-lg'}`}
             style={{
               userSelect: 'none',
               pointerEvents: 'none',
               touchAction: 'pan-x pan-y pinch-zoom',
               display: 'block',
-              maxWidth: '100%',
+              maxWidth: isMobile ? '100%' : '100%',
               height: 'auto',
-              boxShadow: '0 20px 40px rgba(0, 0, 0, 0.7), 0 0 0 1px rgba(100, 116, 139, 0.3)'
+              boxShadow: isMobile ? 'none' : '0 20px 40px rgba(0, 0, 0, 0.7), 0 0 0 1px rgba(100, 116, 139, 0.3)'
             }}
           />
 
-          <button
-            onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
-            disabled={currentPage === totalPages}
-            className="absolute right-1 top-1/2 -translate-y-1/2 z-10 p-2.5 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white rounded-full disabled:opacity-20 disabled:cursor-not-allowed transition-all shadow-2xl border border-amber-600"
-          >
-            <ChevronRight className="w-7 h-7" />
-          </button>
+          {!isMobile && (
+            <button
+              onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+              disabled={currentPage === totalPages}
+              className="absolute right-1 top-1/2 -translate-y-1/2 z-10 p-2.5 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white rounded-full disabled:opacity-20 disabled:cursor-not-allowed transition-all shadow-2xl border border-amber-600"
+            >
+              <ChevronRight className="w-7 h-7" />
+            </button>
+          )}
 
-          <div className="absolute -inset-3 bg-gradient-to-r from-amber-500/6 to-orange-500/6 rounded-2xl -z-10 blur-2xl"></div>
+          {!isMobile && (
+            <div className="absolute -inset-3 bg-gradient-to-r from-amber-500/6 to-orange-500/6 rounded-2xl -z-10 blur-2xl"></div>
+          )}
         </div>
       </div>
+
+      {isMobile && (
+        <div className="fixed bottom-0 left-0 right-0 z-50 bg-slate-900/98 border-t border-slate-800 backdrop-blur-lg shadow-xl">
+          <div className="flex items-center justify-between px-4 py-3">
+            <button
+              onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+              disabled={currentPage === 1}
+              className="flex items-center gap-2 px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-lg disabled:opacity-30 disabled:cursor-not-allowed transition-all"
+            >
+              <ChevronLeft className="w-5 h-5" />
+              <span className="text-sm font-medium">Précédent</span>
+            </button>
+
+            <div className="text-center">
+              <div className="text-white font-bold text-lg">{currentPage}</div>
+              <div className="text-gray-400 text-xs">sur {totalPages}</div>
+            </div>
+
+            <button
+              onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+              disabled={currentPage === totalPages}
+              className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white rounded-lg disabled:opacity-30 disabled:cursor-not-allowed transition-all shadow-lg"
+            >
+              <span className="text-sm font-medium">Suivant</span>
+              <ChevronRight className="w-5 h-5" />
+            </button>
+          </div>
+        </div>
+      )}
 
       <style>{`
         @media print {
