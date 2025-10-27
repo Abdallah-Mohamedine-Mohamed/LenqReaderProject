@@ -279,7 +279,15 @@ const lastRenderRef = useRef<{
  containerHeight: number;
  spread: number;
 } | null>(null);
-const isMobile = typeof window !== 'undefined' ? window.innerWidth < 768 : false;
+const [isMobile, setIsMobile] = useState(typeof window !== 'undefined' ? window.innerWidth < 768 : false);
+
+useEffect(() => {
+  const handleResize = () => {
+    setIsMobile(window.innerWidth < 768);
+  };
+  window.addEventListener('resize', handleResize);
+  return () => window.removeEventListener('resize', handleResize);
+}, []);
 
  const spreadConfig = useMemo(() => {
   const groups: number[] = [];
@@ -1489,7 +1497,7 @@ const articleView = (() => {
     onTouchEnd={handleTouchEnd}
    >
    <header className="fixed top-0 left-0 right-0 z-40 bg-[#ffffff] border-b border-[#dfe5f2] shadow-sm">
-    <div className="max-w-6xl mx-auto h-16 px-4 lg:px-6 flex items-center justify-between">
+    <div className="max-w-6xl mx-auto h-14 md:h-16 px-3 md:px-4 lg:px-6 flex items-center justify-between">
      <div className="flex items-center gap-4">
       <button
        type="button"
@@ -1500,63 +1508,76 @@ const articleView = (() => {
        <X className="w-4 h-4" />
       </button>
       <div className="flex items-center gap-3 min-w-0">
-       <span className="inline-flex px-3 py-1 rounded-full border border-[#d0d8e8] bg-white text-[#1f3b63] font-semibold text-xs sm:text-sm uppercase tracking-[0.18em]">
-        L ENQUETEUR
-       </span>
+       {!isMobile && (
+         <span className="inline-flex px-3 py-1 rounded-full border border-[#d0d8e8] bg-white text-[#1f3b63] font-semibold text-xs sm:text-sm uppercase tracking-[0.18em]">
+          L ENQUETEUR
+         </span>
+       )}
        {(editionDateLabel || tokenData?.pdfs?.titre) && (
-        <span className="text-sm sm:text-base font-medium text-[#1f3b63] truncate">
+        <span className="text-xs sm:text-sm md:text-base font-medium text-[#1f3b63] truncate">
          {editionDateLabel || tokenData?.pdfs?.titre}
         </span>
        )}
       </div>
      </div>
 
-     <div className="flex items-center gap-3">
-      <div className="hidden md:flex items-center gap-2 px-3 py-1.5 rounded-full border border-[#d7deec] bg-white text-xs font-semibold text-[#1f3b63] shadow-sm">
-       <BookOpen className="w-4 h-4" />
-       <span>{totalPages ? `Page ${pageRangeLabel} / ${totalPages}` : `Page ${pageRangeLabel}`}</span>
-      </div>
-      <button
-       type="button"
-       onClick={handleZoomOut}
-       disabled={scale <= 0.5}
-       className={controlButtonClass}
-       title="Zoom arriere"
-      >
-       <ZoomOut className="w-4 h-4" />
-      </button>
-      <button
-       type="button"
-       onClick={handleZoomIn}
-       disabled={scale >= 3}
-       className={controlButtonClass}
-       title="Zoom avant"
-      >
-       <ZoomIn className="w-4 h-4" />
-      </button>
-      <button
-       type="button"
-       onClick={handleRotate}
-       className={controlButtonClass}
-       title="Rotation"
-      >
-       <RotateCw className="w-4 h-4" />
-      </button>
-      <button
-       type="button"
-       onClick={toggleFullscreen}
-       className={controlButtonClass}
-       title={isFullscreen ? 'Quitter plein ecran' : 'Plein ecran'}
-      >
-       {isFullscreen ? <Minimize className="w-4 h-4" /> : <Maximize className="w-4 h-4" />}
-      </button>
+     <div className="flex items-center gap-2 md:gap-3">
+      {!isMobile && (
+        <div className="hidden md:flex items-center gap-2 px-3 py-1.5 rounded-full border border-[#d7deec] bg-white text-xs font-semibold text-[#1f3b63] shadow-sm">
+         <BookOpen className="w-4 h-4" />
+         <span>{totalPages ? `Page ${pageRangeLabel} / ${totalPages}` : `Page ${pageRangeLabel}`}</span>
+        </div>
+      )}
+      {isMobile && (
+        <span className="text-xs font-semibold text-[#1f3b63]">
+          {pageRangeLabel}/{totalPages}
+        </span>
+      )}
+      {!isMobile && (
+        <>
+          <button
+           type="button"
+           onClick={handleZoomOut}
+           disabled={scale <= 0.5}
+           className={controlButtonClass}
+           title="Zoom arriere"
+          >
+           <ZoomOut className="w-4 h-4" />
+          </button>
+          <button
+           type="button"
+           onClick={handleZoomIn}
+           disabled={scale >= 3}
+           className={controlButtonClass}
+           title="Zoom avant"
+          >
+           <ZoomIn className="w-4 h-4" />
+          </button>
+          <button
+           type="button"
+           onClick={handleRotate}
+           className={controlButtonClass}
+           title="Rotation"
+          >
+           <RotateCw className="w-4 h-4" />
+          </button>
+          <button
+           type="button"
+           onClick={toggleFullscreen}
+           className={controlButtonClass}
+           title={isFullscreen ? 'Quitter plein ecran' : 'Plein ecran'}
+          >
+           {isFullscreen ? <Minimize className="w-4 h-4" /> : <Maximize className="w-4 h-4" />}
+          </button>
+        </>
+      )}
      </div>
     </div>
    </header>
 
-   <main className="flex-1 w-full relative pt-24 pb-20 px-4">
+   <main className={`flex-1 w-full relative ${isMobile ? 'pt-16 pb-0' : 'pt-24 pb-20'} ${isMobile ? 'px-0' : 'px-4'}`}>
     <div className="relative max-w-5xl mx-auto flex items-center justify-center">
-     {hasPreviousPage && (
+     {hasPreviousPage && !isMobile && (
       <button
        type="button"
        onClick={goToPreviousPage}
@@ -1570,11 +1591,11 @@ const articleView = (() => {
       </button>
      )}
 
-     <div className="relative border border-[#dfe5f2] bg-white shadow-[0_30px_80px_-35px_rgba(15,31,64,0.6)]">
+     <div className={`relative ${isMobile ? 'border-0' : 'border border-[#dfe5f2]'} bg-white ${isMobile ? 'shadow-none' : 'shadow-[0_30px_80px_-35px_rgba(15,31,64,0.6)]'}`}>
      <canvas
       ref={canvasRef}
       className="block max-w-full h-auto transition-transform duration-300"
-      style={{ backgroundColor: '#ffffff' }}
+      style={{ backgroundColor: '#ffffff', width: isMobile ? '100vw' : 'auto' }}
      />
      {!pdfReady && (
       <div className="absolute inset-0 flex items-center justify-center bg-white/85 backdrop-blur-[1px]">
@@ -1615,7 +1636,7 @@ const articleView = (() => {
        })}
      </div>
 
-     {hasNextPage && (
+     {hasNextPage && !isMobile && (
       <button
        type="button"
        onClick={goToNextPage}
@@ -1628,10 +1649,41 @@ const articleView = (() => {
        </span>
       </button>
      )}
+
+     {isMobile && (
+       <div className="fixed bottom-0 left-0 right-0 z-40 bg-white border-t border-[#dfe5f2] shadow-lg">
+         <div className="flex items-center justify-between px-4 py-3">
+           <button
+             type="button"
+             onClick={goToPreviousPage}
+             disabled={!hasPreviousPage}
+             className="flex items-center gap-2 px-4 py-2 bg-[#f5f7fb] hover:bg-[#e8ecf3] text-[#1f3b63] rounded-lg disabled:opacity-30 disabled:cursor-not-allowed transition-all font-medium text-sm"
+           >
+             <ChevronLeft className="w-5 h-5" />
+             <span>Précédent</span>
+           </button>
+
+           <div className="text-center">
+             <div className="text-[#1f3b63] font-bold text-base">{pageRangeLabel}</div>
+             <div className="text-[#60719d] text-xs">sur {totalPages}</div>
+           </div>
+
+           <button
+             type="button"
+             onClick={goToNextPage}
+             disabled={!hasNextPage}
+             className="flex items-center gap-2 px-4 py-2 bg-[#1f3b63] hover:bg-[#152844] text-white rounded-lg disabled:opacity-30 disabled:cursor-not-allowed transition-all font-medium text-sm shadow-md"
+           >
+             <span>Suivant</span>
+             <ChevronRight className="w-5 h-5" />
+           </button>
+         </div>
+       </div>
+     )}
    </div>
   </main>
 
-   {totalPages > 1 && (
+   {totalPages > 1 && !isMobile && (
     <>
      <button
       type="button"
@@ -1697,10 +1749,10 @@ const articleView = (() => {
       setViewMode('article');
      }}
      disabled={checkingArticles}
-    className="fixed bottom-10 right-6 z-40 h-14 w-14 rounded-full border border-[#d7deec] bg-white text-[#1f3b63] shadow-lg hover:shadow-xl transition disabled:opacity-50"
+    className={`fixed ${isMobile ? 'bottom-20 right-4 h-12 w-12' : 'bottom-10 right-6 h-14 w-14'} rounded-full border border-[#d7deec] bg-white text-[#1f3b63] shadow-lg hover:shadow-xl transition disabled:opacity-50 z-40`}
      title="Mode article"
     >
-     <LayoutGrid className="w-6 h-6 mx-auto" />
+     <LayoutGrid className={`mx-auto ${isMobile ? 'w-5 h-5' : 'w-6 h-6'}`} />
     </button>
    )}
 
