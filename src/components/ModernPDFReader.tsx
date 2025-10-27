@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo, type SyntheticEvent } from 'react';
 import {
  AlertCircle,
  ChevronLeft,
@@ -278,13 +278,43 @@ const lastRenderRef = useRef<{
  containerHeight: number;
  spread: number;
 } | null>(null);
-const isMobile = typeof window !== 'undefined' ? window.innerWidth < 768 : false;
+const isBrowser = typeof window !== 'undefined';
+const [viewportWidth, setViewportWidth] = useState(() =>
+ isBrowser ? window.innerWidth : 1024
+);
+const [viewportHeight, setViewportHeight] = useState(() =>
+ isBrowser ? window.innerHeight : 768
+);
 
 useEffect(() => {
- if (typeof window !== 'undefined' && window.innerWidth < 768) {
+ if (!isBrowser) return;
+
+ const handleResize = () => {
+  setViewportWidth(window.innerWidth);
+  setViewportHeight(window.innerHeight);
+ };
+
+ handleResize();
+ window.addEventListener('resize', handleResize);
+ window.addEventListener('orientationchange', handleResize);
+
+ return () => {
+  window.removeEventListener('resize', handleResize);
+  window.removeEventListener('orientationchange', handleResize);
+ };
+}, [isBrowser]);
+
+const isMobile = viewportWidth < 768;
+const isTablet = viewportWidth >= 768 && viewportWidth < 1024;
+
+useEffect(() => {
+ if (isMobile && isSpreadMode) {
   setIsSpreadMode(false);
  }
-}, []);
+ if (!isMobile && !isSpreadMode && viewportWidth >= 1024) {
+  setIsSpreadMode(true);
+ }
+}, [isMobile, isSpreadMode, viewportWidth]);
 
  const spreadConfig = useMemo(() => {
   const groups: number[] = [];
@@ -1087,8 +1117,12 @@ const renderPage = useCallback(
    return;
   }
 
-  const containerWidth = containerRef.current?.clientWidth ?? window.innerWidth - 32;
-  const containerHeight = window.innerHeight - (isMobile ? 140 : 180);
+  const containerWidth =
+   containerRef.current?.clientWidth ?? Math.max(320, viewportWidth - 32);
+  const containerHeight = Math.max(
+   200,
+   viewportHeight - (isMobile ? 220 : isTablet ? 220 : 260)
+  );
   const pagesToRender: number[] = [pageNumber];
   if (isSpreadMode && shouldRenderSecondPage(pageNumber)) {
    pagesToRender.push(pageNumber + 1);
@@ -1196,7 +1230,7 @@ const renderPage = useCallback(
    }
   }
  },
- [applyWatermark, isMobile, isSpreadMode, shouldRenderSecondPage, totalPages]
+ [applyWatermark, isMobile, isSpreadMode, shouldRenderSecondPage, totalPages, viewportHeight, viewportWidth, isTablet]
 );
 const latestRenderPageRef = useRef(renderPage);
 useEffect(() => {
@@ -1422,9 +1456,14 @@ const openArticleMode = useCallback(
  [editionId, firstArticleId, hasArticles, initialArticleId]
 );
 
-const handleHotspotClick = (hotspot: ArticleHotspot) => {
+const handleHotspotActivate = useCallback(
+ (event: SyntheticEvent, hotspot: ArticleHotspot) => {
+  event.preventDefault();
+  event.stopPropagation();
   openArticleMode(hotspot.id);
- };
+ },
+ [openArticleMode]
+);
 
  if (loading) {
   return (
@@ -1497,6 +1536,8 @@ const articleView = (() => {
 
  const controlButtonClass =
   'h-10 w-10 rounded-full border border-[#d7deec] bg-white text-[#1f3b63] flex items-center justify-center shadow-sm transition hover:shadow-md disabled:opacity-40 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-[#1f3b63]';
+ const mobileNavButtonClass =
+  'flex-1 min-w-[68px] flex flex-col items-center justify-center rounded-2xl border border-[#dfe5f2] bg-white text-[#1f3b63] text-xs font-semibold py-2 px-2 shadow-sm active:scale-[0.97] transition disabled:opacity-40 disabled:pointer-events-none';
  const sideNavButtonBase =
   'absolute top-1/2 -translate-y-1/2 z-30 flex flex-col items-center gap-1 px-3 py-4 rounded-full bg-white border border-[#d7deec] text-[#1f3b63] shadow-lg transition disabled:opacity-40 disabled:pointer-events-none';
 
@@ -1575,13 +1616,17 @@ const articleView = (() => {
     </div>
    </header>
 
-   <main className="flex-1 w-full relative pt-24 pb-20 px-4">
+   <main
+    className={`flex-1 w-full relative pt-24 px-4 ${
+     isMobile ? 'pb-[calc(6.5rem+env(safe-area-inset-bottom,0px))]' : 'pb-20'
+    }`}
+   >
     <div
      className={`relative mx-auto flex items-center justify-center ${
       isMobile ? 'max-w-full' : 'max-w-5xl'
      }`}
     >
-     {hasPreviousPage && (
+     {!isMobile && hasPreviousPage && (
       <button
        type="button"
        onClick={goToPreviousPage}
@@ -1621,9 +1666,11 @@ const articleView = (() => {
          <button
           key={`${hotspot.id}-${hotspot.ordre}-${spreadOffset}`}
           type="button"
-          onClick={(event) => {
-           event.stopPropagation();
-           handleHotspotClick(hotspot);
+          onClick={(event) => handleHotspotActivate(event, hotspot)}
+          onPointerUp={(event) => {
+           if (event.pointerType !== 'mouse') {
+            handleHotspotActivate(event, hotspot);
+           }
           }}
           className="absolute border border-transparent bg-[#1f3b63]/0 hover:bg-[#1f3b63]/10 focus-visible:bg-[#1f3b63]/12 rounded-lg transition-colors duration-200"
           style={{
@@ -1631,6 +1678,7 @@ const articleView = (() => {
            top: `${clamp01(hotspot.y) * 100}%`,
            width: `${widthPercent}%`,
            height: `${clamp01(hotspot.height) * 100}%`,
+           touchAction: 'manipulation',
           }}
           title={hotspot.titre}
          >
@@ -1640,7 +1688,7 @@ const articleView = (() => {
        })}
      </div>
 
-      {hasNextPage && (
+      {!isMobile && hasNextPage && (
       <button
        type="button"
        onClick={goToNextPage}
@@ -1654,11 +1702,60 @@ const articleView = (() => {
       </button>
      )}
    </div>
-   </main>
+  </main>
+
+   {isMobile && viewMode === 'pdf' && (
+    <nav className="fixed bottom-0 left-0 right-0 z-40 bg-white/95 border-t border-[#dfe5f2] backdrop-blur-md px-4 pb-[calc(env(safe-area-inset-bottom,0px)+10px)] pt-3">
+     <div className="max-w-3xl mx-auto flex items-center gap-2">
+      <button
+       type="button"
+       onClick={goToPreviousPage}
+       disabled={!hasPreviousPage}
+       className={mobileNavButtonClass}
+       title="Page precedente"
+      >
+       <ChevronLeft className="w-4 h-4 mb-1" />
+       <span>Precedente</span>
+      </button>
+      <button
+       type="button"
+       onClick={() => setTocOpen(prev => !prev)}
+       className={`${mobileNavButtonClass} ${tocOpen ? 'bg-[#1f3b63] text-white border-[#1f3b63]' : ''}`}
+       title={tocOpen ? 'Masquer la table des matieres' : 'Afficher la table des matieres'}
+      >
+       <ChevronUp className="w-4 h-4 mb-1 transition-transform duration-150" style={{ transform: tocOpen ? 'rotate(180deg)' : 'rotate(0deg)' }} />
+       <span>Sommaire</span>
+      </button>
+      {hasArticles && (
+       <button
+        type="button"
+        onClick={() => openArticleMode()}
+        disabled={checkingArticles}
+        className={mobileNavButtonClass}
+        title="Mode article"
+       >
+        <BookOpen className="w-4 h-4 mb-1" />
+        <span>Article</span>
+       </button>
+      )}
+      <button
+       type="button"
+       onClick={goToNextPage}
+       disabled={!hasNextPage}
+       className={mobileNavButtonClass}
+       title="Page suivante"
+      >
+       <ChevronRight className="w-4 h-4 mb-1" />
+       <span>Suivante</span>
+      </button>
+     </div>
+    </nav>
+   )}
 
    {totalPages > 1 && (
     <>
-     <button
+     {!isMobile && (
+      <button
       type="button"
       onClick={() => setTocOpen(prev => !prev)}
       disabled={!pdfReady}
@@ -1668,14 +1765,22 @@ const articleView = (() => {
       title={tocOpen ? 'Masquer la table des matieres' : 'Afficher la table des matieres'}
      >
       {tocOpen ? <ChevronDown className="w-5 h-5" /> : <ChevronUp className="w-5 h-5" />}
-     </button>
+      </button>
+     )}
 
      <div
-      className={`fixed left-0 right-0 bottom-0 z-30 transform transition-transform duration-300 ${
+      className={`fixed left-0 right-0 z-30 transform transition-transform duration-300 ${
        tocOpen ? 'translate-y-0' : 'translate-y-full pointer-events-none'
       }`}
+      style={{
+       bottom: isMobile
+        ? 'calc(env(safe-area-inset-bottom, 0px) + 86px)'
+        : '0px',
+      }}
      >
-      <div className="mx-auto max-w-6xl bg-white/95 border-t border-[#dfe5f2] shadow-lg rounded-t-3xl px-4 py-4 backdrop-blur-md">
+      <div
+       className={`mx-auto ${isMobile ? 'max-w-full' : 'max-w-6xl'} bg-white/95 border-t border-[#dfe5f2] shadow-lg rounded-t-3xl px-4 py-4 backdrop-blur-md`}
+      >
        <div className="flex items-center justify-between mb-3">
         <p className="text-xs font-semibold text-[#1f3b63] uppercase tracking-wide">
          Table des matieres
@@ -1748,9 +1853,3 @@ declare global {
   pdfDocument: any;
  }
 }
-
-
-
-
-
-
