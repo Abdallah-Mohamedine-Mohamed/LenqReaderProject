@@ -15,7 +15,7 @@ import {
  LayoutGrid,
 } from 'lucide-react';
 import { supabase, Edition } from '../lib/supabase';
-import { ensurePromiseWithResolvers } from '../utils/ensurePromiseWithResolvers';
+import { ensurePromiseWithResolvers } from '../utils/PromiseConstructorWithResolvers';
 import { ArticleReader } from './ArticleReader';
 
 interface ReaderAccessData {

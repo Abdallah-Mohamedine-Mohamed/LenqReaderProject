@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { AlertCircle, Lock, ChevronLeft, ChevronRight, Maximize, Minimize, BookOpen } from 'lucide-react';
 import { supabase } from '../lib/supabase';
-import { ensurePromiseWithResolvers } from '../utils/ensurePromiseWithResolvers';
+import { ensurePromiseWithResolvers } from '../utils/PromiseConstructorWithResolvers';
 import { ArticleView } from './ArticleView';
 
 interface SecureReaderProps {
