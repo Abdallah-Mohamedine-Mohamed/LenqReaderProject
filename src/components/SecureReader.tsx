@@ -573,7 +573,11 @@ const renderPDF = useCallback(async () => {
     } catch (err) {
       console.error('Error loading PDF:', err);
       if (isMountedRef.current) {
-        setError('Erreur lors du chargement du PDF');
+        const message =
+          err instanceof Error
+            ? `Erreur lors du chargement du PDF : ${err.message}`
+            : 'Erreur lors du chargement du PDF';
+        setError(message);
       }
     }
   }, [loadPdfJs, pdfUrl, processRenderQueue]);
