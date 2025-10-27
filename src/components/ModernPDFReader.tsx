@@ -11,9 +11,7 @@ import {
  ChevronUp,
  ChevronDown,
  BookOpen,
- FileText,
  X,
- LayoutGrid,
 } from 'lucide-react';
 import { supabase, Edition } from '../lib/supabase';
 import { ensurePromiseWithResolvers } from '../utils/ensurePromiseWithResolvers';
@@ -224,9 +222,7 @@ export function ModernPDFReader({ token, initialData }: ModernPDFReaderProps) {
  const isRenderingRef = useRef(false);
  const pendingRenderRef = useRef<{ page: number; rotation: number; scale: number } | null>(null);
  const [pdfReady, setPdfReady] = useState(false);
- const [isSpreadMode, setIsSpreadMode] = useState(
-  () => (typeof window !== 'undefined' ? window.innerWidth >= 1024 : true)
- );
+const [isSpreadMode, setIsSpreadMode] = useState(true);
  const [tocOpen, setTocOpen] = useState(false);
  const [checkingArticles, setCheckingArticles] = useState(false);
  const [articleHotspots, setArticleHotspots] = useState<Record<number, ArticleHotspot[]>>({});
@@ -282,46 +278,13 @@ const lastRenderRef = useRef<{
  containerHeight: number;
  spread: number;
 } | null>(null);
-const userSpreadPreferenceRef = useRef(false);
-const [viewportWidth, setViewportWidth] = useState(
- () => (typeof window !== 'undefined' ? window.innerWidth : 1200)
-);
-const [viewportHeight, setViewportHeight] = useState(
- () => (typeof window !== 'undefined' ? window.innerHeight : 800)
-);
+const isMobile = typeof window !== 'undefined' ? window.innerWidth < 768 : false;
 
 useEffect(() => {
- if (typeof window === 'undefined') return;
-
- const handleResize = () => {
-  setViewportWidth(window.innerWidth);
-  setViewportHeight(window.innerHeight);
- };
-
- handleResize();
- window.addEventListener('resize', handleResize);
- window.addEventListener('orientationchange', handleResize);
-
- return () => {
-  window.removeEventListener('resize', handleResize);
-  window.removeEventListener('orientationchange', handleResize);
- };
-}, []);
-
-const isMobile = viewportWidth < 768;
-const isTablet = viewportWidth >= 768 && viewportWidth < 1024;
-const spreadViewEnabled = !isMobile && isSpreadMode;
-
-useEffect(() => {
- if (isMobile && isSpreadMode) {
+ if (typeof window !== 'undefined' && window.innerWidth < 768) {
   setIsSpreadMode(false);
-  return;
  }
-
- if (!isMobile && !userSpreadPreferenceRef.current && viewportWidth >= 1024 && !isSpreadMode) {
-  setIsSpreadMode(true);
- }
-}, [isMobile, isSpreadMode, viewportWidth]);
+}, []);
 
  const spreadConfig = useMemo(() => {
   const groups: number[] = [];
@@ -331,7 +294,7 @@ useEffect(() => {
    return { groups, doubleStarts };
   }
 
-  if (!spreadViewEnabled) {
+  if (!isSpreadMode) {
    for (let page = 1; page <= totalPages; page += 1) {
     groups.push(page);
    }
@@ -363,7 +326,7 @@ useEffect(() => {
   }
 
   return { groups, doubleStarts };
- }, [spreadViewEnabled, totalPages]);
+ }, [isSpreadMode, totalPages]);
 
  const spreadGroups = spreadConfig.groups;
  const spreadDoubleStarts = spreadConfig.doubleStarts;
@@ -373,7 +336,7 @@ const clampPage = useCallback(
   if (!totalPages || totalPages <= 1) return 1;
   let normalized = Math.max(1, Math.min(page, totalPages));
 
-  if (!spreadViewEnabled || spreadGroups.length === 0) {
+  if (!isSpreadMode || spreadGroups.length === 0) {
    return normalized;
   }
 
@@ -387,12 +350,12 @@ const clampPage = useCallback(
   }
   return target;
  },
- [spreadViewEnabled, spreadGroups, totalPages]
+ [isSpreadMode, spreadGroups, totalPages]
 );
 
 const shouldRenderSecondPage = useCallback(
- (pageNumber: number) => spreadViewEnabled && spreadDoubleStarts.has(pageNumber),
- [spreadDoubleStarts, spreadViewEnabled]
+ (pageNumber: number) => isSpreadMode && spreadDoubleStarts.has(pageNumber),
+ [spreadDoubleStarts, isSpreadMode]
 );
 
 const setCurrentPage = useCallback(
@@ -1040,7 +1003,7 @@ const activeSpreadPages = useMemo(() => {
 }, [currentPage, shouldRenderSecondPage]);
 
 const hotspotsForSpread = useMemo(() => {
- if (!spreadViewEnabled) {
+ if (!isSpreadMode) {
   return articleHotspots[currentPage] || [];
  }
  if (!shouldRenderSecondPage(currentPage)) {
@@ -1061,7 +1024,7 @@ const hotspotsForSpread = useMemo(() => {
    : [];
 
  return [...currentHotspots, ...nextHotspots];
-}, [articleHotspots, currentPage, spreadViewEnabled, shouldRenderSecondPage, totalPages]);
+}, [articleHotspots, currentPage, isSpreadMode, shouldRenderSecondPage, totalPages]);
 
 const handleSelectPage = useCallback(
  (pageNumber: number) => {
@@ -1124,14 +1087,10 @@ const renderPage = useCallback(
    return;
   }
 
-  const containerWidth =
-   containerRef.current?.clientWidth ?? Math.max(320, viewportWidth - 32);
-  const containerHeight = Math.max(
-   160,
-   viewportHeight - (isMobile ? 200 : isTablet ? 220 : 260)
-  );
+  const containerWidth = containerRef.current?.clientWidth ?? window.innerWidth - 32;
+  const containerHeight = window.innerHeight - (isMobile ? 140 : 180);
   const pagesToRender: number[] = [pageNumber];
-  if (spreadViewEnabled && shouldRenderSecondPage(pageNumber)) {
+  if (isSpreadMode && shouldRenderSecondPage(pageNumber)) {
    pagesToRender.push(pageNumber + 1);
   }
 
@@ -1237,7 +1196,7 @@ const renderPage = useCallback(
    }
   }
  },
- [applyWatermark, isMobile, isTablet, spreadViewEnabled, shouldRenderSecondPage, totalPages, viewportHeight, viewportWidth]
+ [applyWatermark, isMobile, isSpreadMode, shouldRenderSecondPage, totalPages]
 );
 const latestRenderPageRef = useRef(renderPage);
 useEffect(() => {
@@ -1366,11 +1325,6 @@ useEffect(() => {
 const handleZoomIn = () => setScale(prev => Math.min(prev + 0.25, 3));
 const handleZoomOut = () => setScale(prev => Math.max(prev - 0.25, 0.5));
 const handleRotate = () => setRotation(prev => (prev + 90) % 360);
-const handleToggleSpread = () => {
- userSpreadPreferenceRef.current = true;
- setIsSpreadMode(prev => !prev);
-};
-
  const toggleFullscreen = () => {
   if (!document.fullscreenElement) {
    document.documentElement.requestFullscreen();
@@ -1543,8 +1497,6 @@ const articleView = (() => {
 
  const controlButtonClass =
   'h-10 w-10 rounded-full border border-[#d7deec] bg-white text-[#1f3b63] flex items-center justify-center shadow-sm transition hover:shadow-md disabled:opacity-40 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-[#1f3b63]';
- const mobileControlButton =
-  'h-10 w-10 rounded-full border border-[#d7deec] bg-white text-[#1f3b63] flex items-center justify-center shadow-sm active:scale-95 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-[#1f3b63] disabled:opacity-40 disabled:pointer-events-none';
  const sideNavButtonBase =
   'absolute top-1/2 -translate-y-1/2 z-30 flex flex-col items-center gap-1 px-3 py-4 rounded-full bg-white border border-[#d7deec] text-[#1f3b63] shadow-lg transition disabled:opacity-40 disabled:pointer-events-none';
 
@@ -1557,135 +1509,79 @@ const articleView = (() => {
     onTouchMove={handleTouchMove}
     onTouchEnd={handleTouchEnd}
    >
-   <header className="sticky top-0 left-0 right-0 z-40 bg-white/95 border-b border-[#dfe5f2] backdrop-blur">
-    <div className="max-w-6xl mx-auto h-14 sm:h-16 px-4 lg:px-6 flex items-center justify-between gap-3">
-     <div className="flex items-center gap-3 min-w-0">
+   <header className="fixed top-0 left-0 right-0 z-40 bg-[#ffffff] border-b border-[#dfe5f2] shadow-sm">
+    <div className="max-w-6xl mx-auto h-16 px-4 lg:px-6 flex items-center justify-between">
+     <div className="flex items-center gap-4">
       <button
        type="button"
        onClick={handleExit}
-       className="h-10 w-10 rounded-full border border-[#d7deec] bg-white text-[#1f3b63] flex items-center justify-center shadow-sm hover:shadow-md transition hover:-translate-x-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-[#1f3b63]"
+       className="h-10 w-10 rounded-full border border-[#d7deec] bg-white text-[#1f3b63] flex items-center justify-center shadow-sm hover:shadow-md transition hover:-translate-x-0.5"
        title="Fermer la liseuse"
       >
        <X className="w-4 h-4" />
       </button>
-      <div className="flex flex-col min-w-0">
-       <span className="inline-flex px-3 py-1 rounded-full border border-[#d0d8e8] bg-white text-[#1f3b63] font-semibold text-xs uppercase tracking-[0.18em]">
+      <div className="flex items-center gap-3 min-w-0">
+       <span className="inline-flex px-3 py-1 rounded-full border border-[#d0d8e8] bg-white text-[#1f3b63] font-semibold text-xs sm:text-sm uppercase tracking-[0.18em]">
         L ENQUETEUR
        </span>
        {(editionDateLabel || tokenData?.pdfs?.titre) && (
-        <span className="mt-1 hidden sm:inline text-sm font-medium text-[#1f3b63] truncate">
+        <span className="text-sm sm:text-base font-medium text-[#1f3b63] truncate">
          {editionDateLabel || tokenData?.pdfs?.titre}
-        </span>
-       )}
-       {(editionDateLabel || tokenData?.pdfs?.titre) && (
-        <span className="mt-1 text-xs font-medium text-[#1f3b63] truncate sm:hidden">
-         {editionDateLabel || tokenData?.pdfs?.titre}
-        </span>
-       )}
-       {totalPages > 0 && (
-        <span className="sm:hidden text-[11px] font-semibold text-[#60719d] uppercase tracking-wide mt-1">
-         {totalPages ? `Page ${pageRangeLabel} / ${totalPages}` : `Page ${pageRangeLabel}`}
         </span>
        )}
       </div>
      </div>
 
-     <div className="flex items-center gap-2 sm:gap-3">
-      {!isMobile && (
-       <div className="hidden md:flex items-center gap-2 px-3 py-1.5 rounded-full border border-[#d7deec] bg-white text-xs font-semibold text-[#1f3b63] shadow-sm">
-        <BookOpen className="w-4 h-4" />
-        <span>{totalPages ? `Page ${pageRangeLabel} / ${totalPages}` : `Page ${pageRangeLabel}`}</span>
-       </div>
-      )}
-      {!isMobile && (
-       <button
-        type="button"
-        onClick={handleToggleSpread}
-        className={controlButtonClass}
-        title={spreadViewEnabled ? 'Afficher une page' : 'Afficher la double page'}
-       >
-        {spreadViewEnabled ? <LayoutGrid className="w-4 h-4" /> : <BookOpen className="w-4 h-4" />}
-       </button>
-      )}
-      {!isMobile && (
-       <>
-        <button
-         type="button"
-         onClick={handleZoomOut}
-         disabled={scale <= 0.5}
-         className={controlButtonClass}
-         title="Zoom arriere"
-        >
-         <ZoomOut className="w-4 h-4" />
-        </button>
-        <button
-         type="button"
-         onClick={handleZoomIn}
-         disabled={scale >= 3}
-         className={controlButtonClass}
-         title="Zoom avant"
-        >
-         <ZoomIn className="w-4 h-4" />
-        </button>
-        <button
-         type="button"
-         onClick={handleRotate}
-         className={controlButtonClass}
-         title="Rotation"
-        >
-         <RotateCw className="w-4 h-4" />
-        </button>
-        <button
-         type="button"
-         onClick={toggleFullscreen}
-         className={controlButtonClass}
-         title={isFullscreen ? 'Quitter plein ecran' : 'Plein ecran'}
-        >
-         {isFullscreen ? <Minimize className="w-4 h-4" /> : <Maximize className="w-4 h-4" />}
-        </button>
-       </>
-      )}
-      {isMobile && hasArticles && (
-       <button
-        type="button"
-        onClick={() => openArticleMode()}
-        className={mobileControlButton}
-        title="Mode article"
-       >
-        <BookOpen className="w-4 h-4" />
-       </button>
-      )}
-      {isMobile && (
-       <button
-        type="button"
-        onClick={handleRotate}
-        className={mobileControlButton}
-        title="Rotation"
-       >
-        <RotateCw className="w-4 h-4" />
-       </button>
-      )}
-      {isMobile && totalPages > 1 && (
-       <button
-        type="button"
-        onClick={() => setTocOpen(prev => !prev)}
-        className={mobileControlButton}
-        title={tocOpen ? 'Masquer la table des matieres' : 'Afficher la table des matieres'}
-       >
-        <LayoutGrid className="w-4 h-4" />
-       </button>
-      )}
+     <div className="flex items-center gap-3">
+      <div className="hidden md:flex items-center gap-2 px-3 py-1.5 rounded-full border border-[#d7deec] bg-white text-xs font-semibold text-[#1f3b63] shadow-sm">
+       <BookOpen className="w-4 h-4" />
+       <span>{totalPages ? `Page ${pageRangeLabel} / ${totalPages}` : `Page ${pageRangeLabel}`}</span>
+      </div>
+      <button
+       type="button"
+       onClick={handleZoomOut}
+       disabled={scale <= 0.5}
+       className={controlButtonClass}
+       title="Zoom arriere"
+      >
+       <ZoomOut className="w-4 h-4" />
+      </button>
+      <button
+       type="button"
+       onClick={handleZoomIn}
+       disabled={scale >= 3}
+       className={controlButtonClass}
+       title="Zoom avant"
+      >
+       <ZoomIn className="w-4 h-4" />
+      </button>
+      <button
+       type="button"
+       onClick={handleRotate}
+       className={controlButtonClass}
+       title="Rotation"
+      >
+       <RotateCw className="w-4 h-4" />
+      </button>
+      <button
+       type="button"
+       onClick={toggleFullscreen}
+       className={controlButtonClass}
+       title={isFullscreen ? 'Quitter plein ecran' : 'Plein ecran'}
+      >
+       {isFullscreen ? <Minimize className="w-4 h-4" /> : <Maximize className="w-4 h-4" />}
+      </button>
      </div>
     </div>
    </header>
 
-   <main className="flex-1 w-full relative px-4 pt-20 sm:pt-24 pb-40 sm:pb-24">
+   <main className="flex-1 w-full relative pt-24 pb-20 px-4">
     <div
      className={`relative mx-auto flex items-center justify-center ${
       isMobile ? 'max-w-full' : 'max-w-5xl'
      }`}
     >
-     {!isMobile && hasPreviousPage && (
+     {hasPreviousPage && (
       <button
        type="button"
        onClick={goToPreviousPage}
@@ -1699,7 +1595,7 @@ const articleView = (() => {
       </button>
      )}
 
-     <div className="relative w-full border border-[#dfe5f2] bg-white shadow-[0_30px_80px_-35px_rgba(15,31,64,0.6)] rounded-3xl overflow-hidden">
+     <div className="relative border border-[#dfe5f2] bg-white shadow-[0_30px_80px_-35px_rgba(15,31,64,0.6)]">
      <canvas
       ref={canvasRef}
       className="block max-w-full h-auto transition-transform duration-300"
@@ -1715,7 +1611,7 @@ const articleView = (() => {
      )}
 
       {viewMode === 'pdf' &&
-       (spreadViewEnabled ? hotspotsForSpread : hotspotsForCurrentPage).map((hotspot) => {
+       (isSpreadMode ? hotspotsForSpread : hotspotsForCurrentPage).map((hotspot) => {
         const spreadOffset = (hotspot as { spreadOffset?: number }).spreadOffset ?? 0;
         const pageWidthPercent = 100 / Math.max(1, spreadSlotCount);
         const leftPercent = spreadOffset * pageWidthPercent + clamp01(hotspot.x) * pageWidthPercent;
@@ -1744,7 +1640,7 @@ const articleView = (() => {
        })}
      </div>
 
-     {!isMobile && hasNextPage && (
+      {hasNextPage && (
       <button
        type="button"
        onClick={goToNextPage}
@@ -1758,92 +1654,29 @@ const articleView = (() => {
       </button>
      )}
    </div>
-  </main>
-
-   {isMobile && viewMode === 'pdf' && (
-    <nav className="fixed left-0 right-0 bottom-0 z-40 bg-white/95 border-t border-[#dfe5f2] backdrop-blur px-4 pb-[max(env(safe-area-inset-bottom),0px)] pt-3">
-     <div className="max-w-5xl mx-auto flex items-center gap-2">
-      <button
-       type="button"
-       onClick={goToPreviousPage}
-       disabled={!hasPreviousPage}
-       className={mobileControlButton}
-       title="Page precedente"
-      >
-       <ChevronLeft className="w-5 h-5" />
-      </button>
-      <div className="flex-1 text-center">
-       <p className="text-sm font-semibold text-[#1f3b63]">
-        {totalPages ? `Page ${pageRangeLabel} / ${totalPages}` : `Page ${pageRangeLabel}`}
-       </p>
-      </div>
-      {hasArticles && (
-       <button
-        type="button"
-        onClick={() => openArticleMode()}
-        className={mobileControlButton}
-        title="Mode article"
-        disabled={checkingArticles}
-       >
-        <FileText className="w-4 h-4" />
-       </button>
-      )}
-      {totalPages > 1 && (
-       <button
-        type="button"
-        onClick={() => setTocOpen(prev => !prev)}
-        className={`${mobileControlButton} ${tocOpen ? 'bg-[#1f3b63] text-white border-[#1f3b63]' : ''}`}
-        title={tocOpen ? 'Masquer la table des matieres' : 'Afficher la table des matieres'}
-       >
-        <LayoutGrid className="w-4 h-4" />
-       </button>
-      )}
-      <button
-       type="button"
-       onClick={goToNextPage}
-       disabled={!hasNextPage}
-       className={mobileControlButton}
-       title="Page suivante"
-      >
-       <ChevronRight className="w-5 h-5" />
-      </button>
-     </div>
-   </nav>
-  )}
+   </main>
 
    {totalPages > 1 && (
     <>
-     {!isMobile && (
-      <button
-       type="button"
-       onClick={() => setTocOpen(prev => !prev)}
-       disabled={!pdfReady}
-       className={`fixed bottom-20 left-1/2 -translate-x-1/2 z-40 h-10 w-10 rounded-full border border-[#d7deec] bg-white text-[#1f3b63] shadow-md flex items-center justify-center transition ${
-        pdfReady ? 'hover:shadow-lg' : 'opacity-40 cursor-not-allowed'
-       }`}
-       title={tocOpen ? 'Masquer la table des matieres' : 'Afficher la table des matieres'}
-      >
-       {tocOpen ? <ChevronDown className="w-5 h-5" /> : <ChevronUp className="w-5 h-5" />}
-      </button>
-     )}
+     <button
+      type="button"
+      onClick={() => setTocOpen(prev => !prev)}
+      disabled={!pdfReady}
+      className={`fixed bottom-20 left-1/2 -translate-x-1/2 z-40 h-10 w-10 rounded-full border border-[#d7deec] bg-white text-[#1f3b63] shadow-md flex items-center justify-center transition ${
+       pdfReady ? 'hover:shadow-lg' : 'opacity-40 cursor-not-allowed'
+      }`}
+      title={tocOpen ? 'Masquer la table des matieres' : 'Afficher la table des matieres'}
+     >
+      {tocOpen ? <ChevronDown className="w-5 h-5" /> : <ChevronUp className="w-5 h-5" />}
+     </button>
 
      <div
-      className={`fixed left-0 right-0 z-30 transform transition-transform duration-300 ${
+      className={`fixed left-0 right-0 bottom-0 z-30 transform transition-transform duration-300 ${
        tocOpen ? 'translate-y-0' : 'translate-y-full pointer-events-none'
       }`}
-      style={{
-       bottom:
-        isMobile && viewMode === 'pdf'
-         ? 'calc(env(safe-area-inset-bottom, 0px) + 72px)'
-         : '0px',
-      }}
      >
-      <div
-       className={`mx-auto ${
-        isMobile ? 'max-w-full' : 'max-w-6xl'
-       } bg-white/95 border-t border-[#dfe5f2] shadow-lg rounded-t-3xl px-4 py-4 backdrop-blur-md`}
-      >
-       <div className="flex items-center justify-between mb-3 gap-2">
+      <div className="mx-auto max-w-6xl bg-white/95 border-t border-[#dfe5f2] shadow-lg rounded-t-3xl px-4 py-4 backdrop-blur-md">
+       <div className="flex items-center justify-between mb-3">
         <p className="text-xs font-semibold text-[#1f3b63] uppercase tracking-wide">
          Table des matieres
         </p>
@@ -1915,5 +1748,12 @@ declare global {
   pdfDocument: any;
  }
 }
+
+
+
+
+
+
+
 
 
