@@ -1,4 +1,4 @@
-﻿import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
   AlertCircle,
   Lock,
@@ -675,6 +675,42 @@ const renderPDF = useCallback(async () => {
     return articles.filter((article) => article.pageNumber === currentPage);
   }, [articles, articlesSource, currentPage]);
 
+  const resolveSecurePdfUrl = useCallback(async (rawPath: string | null | undefined) => {
+    const storagePath = rawPath?.trim?.() ?? '';
+    if (!storagePath) {
+      throw new Error('Document inaccessible');
+    }
+
+    if (/^https?:\/\//i.test(storagePath)) {
+      return storagePath;
+    }
+
+    const trySignedUrl = async () => {
+      const { data: signedData, error: signedError } = await supabase.storage
+        .from('secure-pdfs')
+        .createSignedUrl(storagePath, 60 * 60);
+      if (!signedError && signedData?.signedUrl) {
+        return signedData.signedUrl;
+      }
+      return null;
+    };
+
+    const tryPublicUrl = () => {
+      const {
+        data: { publicUrl },
+      } = supabase.storage.from('secure-pdfs').getPublicUrl(storagePath);
+      return publicUrl || null;
+    };
+
+    const signedUrl = await trySignedUrl();
+    if (signedUrl) return signedUrl;
+
+    const fallbackUrl = tryPublicUrl();
+    if (fallbackUrl) return fallbackUrl;
+
+    throw new Error('Impossible de g�n�rer un acc�s s�curis� au PDF');
+  }, []);
+
   const validateToken = useCallback(async () => {
     if (!token) {
       setError('Lien invalide');
@@ -714,18 +750,12 @@ const renderPDF = useCallback(async () => {
         throw new Error('Document inaccessible');
       }
 
-      const { data: signedData, error: signedError } = await supabase.storage
-        .from('secure-pdfs')
-        .createSignedUrl(data.pdfs.url_fichier, 60);
-
-      if (signedError || !signedData?.signedUrl) {
-        throw new Error('Impossible de générer un accès sécurisé au PDF');
-      }
+      const resolvedPdfUrl = await resolveSecurePdfUrl(data.pdfs.url_fichier);
 
       if (!isMountedRef.current) return;
 
       setTokenData(data as TokenData);
-      setPdfUrl(signedData.signedUrl);
+      setPdfUrl(resolvedPdfUrl);
       loadStructuredArticles(data.pdfs?.url_fichier ?? '', data.pdf_id);
 
       await supabase.from('logs').insert({
@@ -743,7 +773,7 @@ const renderPDF = useCallback(async () => {
         setLoading(false);
       }
     }
-  }, [token, loadStructuredArticles]);
+  }, [token, loadStructuredArticles, resolveSecurePdfUrl]);
 
   useEffect(() => {
     validateToken();
@@ -1199,4 +1229,7 @@ declare global {
     pdfjsLib: any;
   }
 }
+
+
+
 
