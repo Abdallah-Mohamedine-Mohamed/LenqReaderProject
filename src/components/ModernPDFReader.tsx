@@ -412,20 +412,23 @@ const resolvePdfUrl = useCallback(async (storagePath: string) => {
    throw new Error('Chemin du PDF invalide');
   }
 
+  console.log('[ModernPDFReader] Resolving PDF URL for path:', trimmedPath);
+
   try {
    const { data, error } = await supabase.storage
     .from('secure-pdfs')
     .createSignedUrl(trimmedPath, 60 * 60);
 
    if (!error && data?.signedUrl) {
+    console.log('[ModernPDFReader] Using signed URL:', data.signedUrl);
     return data.signedUrl;
    }
 
    if (error) {
-    console.warn('Echec de generation de l URL signee, tentative de fallback', error);
+    console.warn('[ModernPDFReader] Signed URL failed, trying public URL. Error:', error);
    }
   } catch (err) {
-   console.warn('Echec de generation de l URL signee, tentative de fallback', err);
+   console.warn('[ModernPDFReader] Signed URL exception, trying public URL. Error:', err);
   }
 
   const { data: publicData } = supabase.storage
@@ -433,14 +436,17 @@ const resolvePdfUrl = useCallback(async (storagePath: string) => {
    .getPublicUrl(trimmedPath);
 
   if (publicData?.publicUrl) {
+   console.log('[ModernPDFReader] Using public URL:', publicData.publicUrl);
    return publicData.publicUrl;
   }
 
   if (/^https?:\/\//i.test(trimmedPath)) {
+   console.log('[ModernPDFReader] Using direct URL:', trimmedPath);
    return trimmedPath;
   }
 
- throw new Error('Impossible de generer une URL pour le PDF demande');
+ console.error('[ModernPDFReader] Failed to resolve PDF URL for path:', trimmedPath);
+ throw new Error(`Impossible de generer une URL pour le PDF: ${trimmedPath}`);
 }, []);
 
 const fetchIpAddress = useCallback(async () => {
@@ -727,6 +733,13 @@ async (editionIdCandidate: string | null | undefined, pdfPath: string) => {
 
  const applyAccessData = useCallback(
   async (payload: ReaderAccessData) => {
+   console.log('[ModernPDFReader] Applying access data:', {
+     pdfUrl: payload.pdfUrl,
+     pdfTitle: payload.pdfTitle,
+     hasArticles: payload.hasArticles,
+     editionId: payload.editionId
+   });
+
    const resolvedUrlPromise = resolvePdfUrl(payload.pdfUrl);
    const metadataPromise = fetchEditionMetadata(payload.editionId ?? null, payload.pdfUrl);
 
@@ -750,8 +763,15 @@ async (editionIdCandidate: string | null | undefined, pdfPath: string) => {
    setHasArticles(payload.hasArticles ?? false);
    setInitialArticleId(null);
 
-   const resolvedUrl = await resolvedUrlPromise;
-   setPdfUrl(resolvedUrl);
+   try {
+     const resolvedUrl = await resolvedUrlPromise;
+     console.log('[ModernPDFReader] Resolved URL successfully:', resolvedUrl);
+     setPdfUrl(resolvedUrl);
+   } catch (err) {
+     console.error('[ModernPDFReader] Failed to resolve PDF URL:', err);
+     setError(err instanceof Error ? err.message : 'Impossible de charger le PDF');
+     return;
+   }
 
    metadataPromise
     .then(async (editionIdResolved) => {
@@ -1201,6 +1221,7 @@ useEffect(() => {
 
  const initializePDF = async () => {
   try {
+   console.log('[ModernPDFReader] Initializing PDF with URL:', pdfUrl);
    await ensurePdfJsLib();
 
    if ((window as any).pdfDocument?.destroy) {
@@ -1211,6 +1232,7 @@ useEffect(() => {
     }
    }
 
+   console.log('[ModernPDFReader] Loading PDF document...');
    const loadingTask = window.pdfjsLib.getDocument({
     url: pdfUrl,
     cMapUrl: 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/cmaps/',
@@ -1223,6 +1245,7 @@ useEffect(() => {
     return;
    }
 
+  console.log('[ModernPDFReader] PDF loaded successfully, pages:', pdf.numPages);
   (window as any).pdfDocument = pdf;
   setTotalPages(pdf.numPages);
   setCurrentPageState(1);
@@ -1232,7 +1255,8 @@ useEffect(() => {
   await latestRenderPageRef.current(1, rotationRef.current, scaleRef.current);
  } catch (err) {
    if (!cancelled) {
-    console.error('Error loading PDF:', err);
+    console.error('[ModernPDFReader] Error loading PDF:', err);
+    console.error('[ModernPDFReader] PDF URL that failed:', pdfUrl);
     let detail = '';
     if (err instanceof Error) {
       detail = err.message;
