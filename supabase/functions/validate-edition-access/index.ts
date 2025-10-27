@@ -95,7 +95,7 @@ Deno.serve(async (req: Request) => {
 
     const { data: userData, error: userError } = await supabaseClient
       .from("users")
-      .select("id, nom, numero_abonne, statut_abonnement, numero_whatsapp, devices_autorises")
+      .select("id, nom, numero_abonne, statut_abonnement, numero_whatsapp")
       .eq("id", tokenData.user_id)
       .maybeSingle();
 
@@ -110,67 +110,39 @@ Deno.serve(async (req: Request) => {
     let suspiciousActivity = false;
     let suspiciousReason = "";
 
-    const fingerprintJson = deviceFingerprint ? JSON.stringify(deviceFingerprint) : null;
-    const allowedDevices = Math.max(1, userData.devices_autorises ?? 2);
+    if (tokenData.device_fingerprint && deviceFingerprint) {
+      if (tokenData.device_fingerprint !== JSON.stringify(deviceFingerprint)) {
+        suspiciousActivity = true;
+        suspiciousReason = "Device différent détecté";
 
-    const parseStoredFingerprints = (raw: string | null): string[] => {
-      if (!raw) return [];
-      try {
-        const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed)) {
-          return parsed.filter((entry): entry is string => typeof entry === "string" && entry.length > 0);
-        }
-      } catch {
-        // raw is not a JSON array, treat it as a single entry string
-      }
-      return raw.trim().length > 0 ? [raw] : [];
-    };
+        await supabaseClient.from("acces_suspects").insert({
+          user_id: tokenData.user_id,
+          token_id: tokenData.id,
+          type_alerte: "device_multiple",
+          description: `Tentative d'accès depuis un device différent. Original: ${tokenData.device_fingerprint}, Nouveau: ${JSON.stringify(deviceFingerprint)}`,
+          severity: "critical",
+          data: {
+            original_device: tokenData.device_fingerprint,
+            new_device: deviceFingerprint,
+            ip_address: ipAddress,
+          },
+        });
 
-    const storedFingerprints = parseStoredFingerprints(tokenData.device_fingerprint as string | null);
-    let fingerprintList = [...storedFingerprints];
-    let fingerprintChanged = false;
+        await supabaseClient
+          .from("tokens")
+          .update({
+            revoked: true,
+            revoked_reason: "Accès depuis un device non autorisé",
+          })
+          .eq("id", tokenData.id);
 
-    if (fingerprintJson) {
-      if (fingerprintList.length === 0) {
-        fingerprintList = [fingerprintJson];
-        fingerprintChanged = true;
-      } else if (!fingerprintList.includes(fingerprintJson)) {
-        if (fingerprintList.length >= allowedDevices) {
-          suspiciousActivity = true;
-          suspiciousReason = "Nombre maximum d'appareils atteint";
-
-          await supabaseClient.from("acces_suspects").insert({
-            user_id: tokenData.user_id,
-            token_id: tokenData.id,
-            type_alerte: "device_multiple",
-            description: `Tentative d'acces depuis un nouvel appareil non autorise. Appareils deja enregistres: ${fingerprintList.join(" || ")}`,
-            severity: "critical",
-            data: {
-              authorized_devices: fingerprintList,
-              new_device: deviceFingerprint,
-              ip_address: ipAddress,
-            },
-          });
-
-          await supabaseClient
-            .from("tokens")
-            .update({
-              revoked: true,
-              revoked_reason: "Nombre maximum d'appareils atteint",
-            })
-            .eq("id", tokenData.id);
-
-          return new Response(
-            JSON.stringify({
-              error: "Acces refuse",
-              reason: "Ce lien a ete desactive car le nombre maximum d'appareils autorises a ete atteint.",
-            }),
-            { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-          );
-        }
-
-        fingerprintList.push(fingerprintJson);
-        fingerprintChanged = true;
+        return new Response(
+          JSON.stringify({
+            error: "Accès refusé",
+            reason: "Ce lien ne peut être ouvert que sur le device d'origine. Partage de lien détecté et signalé."
+          }),
+          { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
       }
     }
 
@@ -219,10 +191,9 @@ Deno.serve(async (req: Request) => {
 
     if (!tokenData.first_access_at) {
       updateData.first_access_at = new Date().toISOString();
-    }
-
-    if (fingerprintChanged || (!tokenData.device_fingerprint && fingerprintList.length > 0)) {
-      updateData.device_fingerprint = JSON.stringify(fingerprintList);
+      if (deviceFingerprint) {
+        updateData.device_fingerprint = JSON.stringify(deviceFingerprint);
+      }
     }
 
     if (ipAddress) {
@@ -256,6 +227,8 @@ Deno.serve(async (req: Request) => {
           hasArticles: true,
           editionId: editionData.id,
           editionTitle: editionData.titre,
+          pdfUrl: pdfData.url_fichier,
+          pdfTitle: pdfData.titre,
           userId: userData.id,
           userName: userData.nom,
           userNumber: userData.numero_abonne,
