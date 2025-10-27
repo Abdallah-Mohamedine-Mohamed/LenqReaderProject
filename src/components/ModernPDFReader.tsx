@@ -1233,7 +1233,26 @@ useEffect(() => {
  } catch (err) {
    if (!cancelled) {
     console.error('Error loading PDF:', err);
-    setError('Erreur lors du chargement du PDF');
+    let detail = '';
+    if (err instanceof Error) {
+      detail = err.message;
+    } else if (err && typeof err === 'object' && 'message' in err) {
+      detail = String((err as any).message);
+    } else if (typeof err === 'string') {
+      detail = err;
+    } else {
+      try {
+        detail = JSON.stringify(err);
+      } catch {
+        detail = String(err);
+      }
+    }
+
+    setError(
+      detail
+        ? `Erreur lors du chargement du PDF : ${detail}`
+        : 'Erreur lors du chargement du PDF'
+    );
    }
   }
  };
@@ -1465,7 +1484,7 @@ const articleView = (() => {
     onTouchMove={handleTouchMove}
     onTouchEnd={handleTouchEnd}
    >
-   <header className="fixed top-0 left-0 right-0 z-40 bg-[#f5f7fb] border-b border-[#dfe5f2] shadow-sm">
+   <header className="fixed top-0 left-0 right-0 z-40 bg-[#ffffff] border-b border-[#dfe5f2] shadow-sm">
     <div className="max-w-6xl mx-auto h-16 px-4 lg:px-6 flex items-center justify-between">
      <div className="flex items-center gap-4">
       <button
