@@ -8,6 +8,8 @@ import {
  Maximize,
  Minimize,
  RotateCw,
+ ChevronUp,
+ ChevronDown,
  BookOpen,
  X,
  LayoutGrid,
@@ -219,6 +221,8 @@ export function ModernPDFReader({ token, initialData }: ModernPDFReaderProps) {
  const isRenderingRef = useRef(false);
  const pendingRenderRef = useRef<{ page: number; rotation: number; scale: number } | null>(null);
  const [pdfReady, setPdfReady] = useState(false);
+ const [isSpreadMode, setIsSpreadMode] = useState(true);
+ const [tocOpen, setTocOpen] = useState(false);
  const [checkingArticles, setCheckingArticles] = useState(false);
  const [articleHotspots, setArticleHotspots] = useState<Record<number, ArticleHotspot[]>>({});
  const [initialArticleId, setInitialArticleId] = useState<string | null>(null);
@@ -264,31 +268,94 @@ export function ModernPDFReader({ token, initialData }: ModernPDFReaderProps) {
  const touchStartRef = useRef({ x: 0, y: 0, distance: 0, time: 0 });
  const scaleRef = useRef(1);
  const rotationRef = useRef(0);
- const currentPageRef = useRef(1);
- const lastRenderRef = useRef<{
-  page: number;
-  rotation: number;
-  scale: number;
-  containerWidth: number;
-  containerHeight: number;
- } | null>(null);
- const isMobile = typeof window !== 'undefined' ? window.innerWidth < 768 : false;
+const currentPageRef = useRef(1);
+const lastRenderRef = useRef<{
+ page: number;
+ rotation: number;
+ scale: number;
+ containerWidth: number;
+ containerHeight: number;
+ spread: number;
+} | null>(null);
+const isMobile = typeof window !== 'undefined' ? window.innerWidth < 768 : false;
 
- const clampPage = useCallback(
-  (page: number) => {
-    if (!totalPages || totalPages <= 1) return 1;
-    if (page <= 1) return 1;
-    if (page >= totalPages) return totalPages;
-    return page;
-  },
-  [totalPages]
+ const spreadConfig = useMemo(() => {
+  const groups: number[] = [];
+  const doubleStarts = new Set<number>();
+
+  if (!totalPages || totalPages <= 0) {
+   return { groups, doubleStarts };
+  }
+
+  if (!isSpreadMode) {
+   for (let page = 1; page <= totalPages; page += 1) {
+    groups.push(page);
+   }
+   return { groups, doubleStarts };
+  }
+
+  groups.push(1);
+  if (totalPages === 1) {
+   return { groups, doubleStarts };
+  }
+
+  let page = 2;
+  while (page <= totalPages) {
+   if (page === totalPages) {
+    groups.push(page);
+    break;
+   }
+
+   if (page + 1 === totalPages) {
+    groups.push(page);
+    doubleStarts.add(page);
+    groups.push(totalPages);
+    break;
+   }
+
+    groups.push(page);
+    doubleStarts.add(page);
+    page += 2;
+  }
+
+  return { groups, doubleStarts };
+ }, [isSpreadMode, totalPages]);
+
+ const spreadGroups = spreadConfig.groups;
+ const spreadDoubleStarts = spreadConfig.doubleStarts;
+
+const clampPage = useCallback(
+ (page: number) => {
+  if (!totalPages || totalPages <= 1) return 1;
+  let normalized = Math.max(1, Math.min(page, totalPages));
+
+  if (!isSpreadMode || spreadGroups.length === 0) {
+   return normalized;
+  }
+
+  let target = spreadGroups[0];
+  for (const start of spreadGroups) {
+   if (start <= normalized) {
+    target = start;
+   } else {
+    break;
+   }
+  }
+  return target;
+ },
+ [isSpreadMode, spreadGroups, totalPages]
 );
 
- const setCurrentPage = useCallback(
-  (value: number | ((prev: number) => number)) => {
-    if (typeof value === 'function') {
-      setCurrentPageState(prev => clampPage(value(prev)));
-    } else {
+ const shouldRenderSecondPage = useCallback(
+  (pageNumber: number) => spreadDoubleStarts.has(pageNumber),
+  [spreadDoubleStarts]
+ );
+
+const setCurrentPage = useCallback(
+ (value: number | ((prev: number) => number)) => {
+  if (typeof value === 'function') {
+   setCurrentPageState(prev => clampPage(value(prev)));
+  } else {
       setCurrentPageState(clampPage(value));
     }
   },
@@ -853,40 +920,129 @@ useEffect(() => {
  }, [clampPage]);
 
 const goToPreviousPage = useCallback(() => {
-  setCurrentPage(prev => (prev <= 1 ? 1 : prev - 1));
-}, [setCurrentPage]);
+  setCurrentPage(prev => {
+   if (!spreadGroups.length) return 1;
+   let index = spreadGroups.findIndex(start => start === prev);
+   if (index === -1) {
+    index = spreadGroups.findIndex(start => start > prev);
+    if (index === -1) {
+     index = spreadGroups.length;
+    }
+    index -= 1;
+   }
+   if (index <= 0) {
+    return spreadGroups[0];
+   }
+   return spreadGroups[index - 1];
+  });
+}, [setCurrentPage, spreadGroups]);
 
 const goToNextPage = useCallback(() => {
   setCurrentPage(prev => {
-    if (!totalPages || prev >= totalPages) return prev;
-    return prev + 1;
+   if (!spreadGroups.length) return prev;
+   const index = spreadGroups.findIndex(start => start === prev);
+   if (index === -1) {
+    return prev;
+   }
+   if (index >= spreadGroups.length - 1) {
+    return prev;
+   }
+   return spreadGroups[index + 1];
   });
-}, [setCurrentPage, totalPages]);
+}, [setCurrentPage, spreadGroups]);
 
-const pageRangeLabel = `${currentPage}`;
+const currentGroupIndex = useMemo(() => {
+ if (!spreadGroups.length) return -1;
+ return spreadGroups.findIndex(start => start === currentPage);
+}, [currentPage, spreadGroups]);
 
-const hasPreviousPage = currentPage > 1;
-const hasNextPage = totalPages ? currentPage < totalPages : false;
+const currentHasSecondPage = shouldRenderSecondPage(currentPage);
 
-const previousPageLabel = `P ${Math.max(1, currentPage - 1)}`;
-const nextPageLabel = `P ${totalPages ? Math.min(totalPages, currentPage + 1) : currentPage + 1}`;
+const pageRangeLabel =
+ currentHasSecondPage && totalPages
+  ? `${currentPage}-${Math.min(totalPages, currentPage + 1)}`
+  : `${currentPage}`;
+
+const hasPreviousPage = currentGroupIndex > 0;
+const hasNextPage = currentGroupIndex !== -1 && currentGroupIndex < spreadGroups.length - 1;
+
+const previousTargetPage =
+ hasPreviousPage && currentGroupIndex > 0 ? spreadGroups[currentGroupIndex - 1] : currentPage;
+const nextTargetPage =
+ hasNextPage && currentGroupIndex >= 0 ? spreadGroups[currentGroupIndex + 1] : currentPage;
+
+const formatPageLabel = (start: number) => {
+ if (shouldRenderSecondPage(start)) {
+  return `P ${start}-${Math.min(totalPages, start + 1)}`;
+ }
+ return `P ${start}`;
+};
+
+const spreadSlotCount = currentHasSecondPage ? 2 : 1;
+
+const previousPageLabel = formatPageLabel(previousTargetPage);
+const nextPageLabel = formatPageLabel(nextTargetPage);
 const hotspotsForCurrentPage = articleHotspots[currentPage] || [];
 
+const activeSpreadPages = useMemo(() => {
+ const pages = new Set<number>();
+ pages.add(currentPage);
+ if (shouldRenderSecondPage(currentPage)) {
+  pages.add(currentPage + 1);
+ }
+ return pages;
+}, [currentPage, shouldRenderSecondPage]);
+
+const hotspotsForSpread = useMemo(() => {
+ if (!isSpreadMode) {
+  return articleHotspots[currentPage] || [];
+ }
+ if (!shouldRenderSecondPage(currentPage)) {
+  return articleHotspots[currentPage] || [];
+ }
+ const currentHotspots = (articleHotspots[currentPage] || []).map(h => ({
+  ...h,
+  pageNumber: currentPage,
+  spreadOffset: 0,
+ }));
+ const nextHotspots =
+  shouldRenderSecondPage(currentPage)
+   ? (articleHotspots[currentPage + 1] || []).map(h => ({
+      ...h,
+      pageNumber: currentPage + 1,
+      spreadOffset: 1,
+     }))
+   : [];
+
+ return [...currentHotspots, ...nextHotspots];
+}, [articleHotspots, currentPage, isSpreadMode, shouldRenderSecondPage, totalPages]);
+
+const handleSelectPage = useCallback(
+ (pageNumber: number) => {
+  if (!totalPages) return;
+  const normalized = clampPage(pageNumber);
+  setCurrentPage(normalized);
+  setTocOpen(false);
+ },
+ [clampPage, setCurrentPage, totalPages]
+);
 
 const applyWatermark = useCallback(
- (context: CanvasRenderingContext2D, canvas: HTMLCanvasElement, pageNumber: number) => {
+ (context: CanvasRenderingContext2D, bounds: { width: number; height: number; offsetX: number }, pageNumber: number) => {
   if (!tokenData?.users?.nom) return;
 
   context.save();
   context.globalAlpha = 0.08;
 
-  const fontSize = Math.max(14, Math.min(canvas.width * 0.02, 24));
+  context.translate(bounds.offsetX, 0);
+
+  const fontSize = Math.max(14, Math.min(bounds.width * 0.02, 24));
   context.font = `600 ${fontSize}px system-ui, -apple-system, sans-serif`;
   context.fillStyle = '#64748B';
   context.textAlign = 'center';
 
-  const centerX = canvas.width / 2;
-  const centerY = canvas.height / 2;
+  const centerX = bounds.width / 2;
+  const centerY = bounds.height / 2;
 
   context.translate(centerX, centerY);
   context.rotate(-Math.PI / 8);
@@ -913,92 +1069,125 @@ useEffect(() => {
 
 const renderPage = useCallback(
  async (pageNumber: number, renderRotation: number, renderScale: number) => {
- const pdf = (window as any).pdfDocument;
- if (!pdf) return;
+  const pdf = (window as any).pdfDocument;
+  if (!pdf) return;
 
- const canvas = canvasRef.current;
- if (!canvas) {
-  pendingRenderRef.current = { page: pageNumber, rotation: renderRotation, scale: renderScale };
-  return;
- }
-
- const containerWidth = containerRef.current?.clientWidth ?? window.innerWidth - 32;
- const containerHeight = window.innerHeight - (isMobile ? 140 : 180);
- const lastRender = lastRenderRef.current;
-
- if (
-  lastRender &&
-  lastRender.page === pageNumber &&
-  lastRender.rotation === renderRotation &&
-  lastRender.scale === renderScale &&
-  lastRender.containerWidth === containerWidth &&
-  lastRender.containerHeight === containerHeight
- ) {
-  return;
- }
-
- if (isRenderingRef.current) {
-  pendingRenderRef.current = { page: pageNumber, rotation: renderRotation, scale: renderScale };
-  return;
- }
-
- isRenderingRef.current = true;
-
- try {
-  const page = await pdf.getPage(pageNumber);
-  const context = canvas.getContext('2d');
-  if (!context) {
-    isRenderingRef.current = false;
-    return;
+  const canvas = canvasRef.current;
+  if (!canvas) {
+   pendingRenderRef.current = { page: pageNumber, rotation: renderRotation, scale: renderScale };
+   return;
   }
 
-  const baseViewport = page.getViewport({ scale: 1, rotation: renderRotation });
+  const containerWidth = containerRef.current?.clientWidth ?? window.innerWidth - 32;
+  const containerHeight = window.innerHeight - (isMobile ? 140 : 180);
+  const pagesToRender: number[] = [pageNumber];
+  if (isSpreadMode && shouldRenderSecondPage(pageNumber)) {
+   pagesToRender.push(pageNumber + 1);
+  }
 
-  const baseScaleRaw = Math.min(
-   containerWidth / baseViewport.width,
-   containerHeight / baseViewport.height
-  );
+  const lastRender = lastRenderRef.current;
+
+  if (
+   lastRender &&
+   lastRender.page === pageNumber &&
+   lastRender.rotation === renderRotation &&
+   lastRender.scale === renderScale &&
+   lastRender.containerWidth === containerWidth &&
+   lastRender.containerHeight === containerHeight &&
+   lastRender.spread === pagesToRender.length
+  ) {
+   return;
+  }
+
+  if (isRenderingRef.current) {
+   pendingRenderRef.current = { page: pageNumber, rotation: renderRotation, scale: renderScale };
+   return;
+  }
+
+  isRenderingRef.current = true;
+
+  try {
+   const pdfPages = await Promise.all(pagesToRender.map((num) => pdf.getPage(num)));
+   const context = canvas.getContext('2d');
+   if (!context) {
+    isRenderingRef.current = false;
+    return;
+   }
+
+   const baseViewports = pdfPages.map((page) =>
+    page.getViewport({ scale: 1, rotation: renderRotation })
+   );
+   const totalBaseWidth = baseViewports.reduce((sum, viewport) => sum + viewport.width, 0);
+   const maxBaseHeight = baseViewports.reduce(
+    (max, viewport) => Math.max(max, viewport.height),
+    0
+   );
+
+   const baseScaleRaw = Math.min(
+    containerWidth / totalBaseWidth,
+    containerHeight / maxBaseHeight
+   );
 
    const baseScale = Math.max(Math.min(baseScaleRaw, 1) * 0.98, 0.1);
    const effectiveScale = baseScale * renderScale;
-   const viewport = page.getViewport({ scale: effectiveScale, rotation: renderRotation });
+
+   const scaledViewports = pdfPages.map((page) =>
+    page.getViewport({ scale: effectiveScale, rotation: renderRotation })
+   );
+
+   const totalWidth = scaledViewports.reduce((sum, viewport) => sum + viewport.width, 0);
+   const maxHeight = scaledViewports.reduce((max, viewport) => Math.max(max, viewport.height), 0);
 
    const dpr = window.devicePixelRatio || 1;
-   canvas.width = Math.max(1, Math.round(viewport.width * dpr));
-   canvas.height = Math.max(1, Math.round(viewport.height * dpr));
-   canvas.style.width = `${viewport.width}px`;
-   canvas.style.height = `${viewport.height}px`;
+   canvas.width = Math.max(1, Math.round(totalWidth * dpr));
+   canvas.height = Math.max(1, Math.round(maxHeight * dpr));
+   canvas.style.width = `${totalWidth}px`;
+   canvas.style.height = `${maxHeight}px`;
 
    context.setTransform(dpr, 0, 0, dpr, 0, 0);
-   context.clearRect(0, 0, viewport.width, viewport.height);
+   context.clearRect(0, 0, totalWidth, maxHeight);
 
-  await page.render({
-   canvasContext: context,
-   viewport,
-  }).promise;
+   let offsetX = 0;
 
-  applyWatermark(context, canvas, pageNumber);
-  lastRenderRef.current = {
-   page: pageNumber,
-   rotation: renderRotation,
-   scale: renderScale,
-   containerWidth,
-   containerHeight,
-  };
-  setPdfReady(true);
- } catch (err) {
-  console.error('Error rendering page:', err);
- } finally {
-  isRenderingRef.current = false;
+   for (let index = 0; index < pdfPages.length; index += 1) {
+    const page = pdfPages[index];
+    const viewport = scaledViewports[index];
+
+    context.save();
+    context.translate(offsetX, 0);
+    await page.render({
+     canvasContext: context,
+     viewport,
+    }).promise;
+    context.restore();
+
+    applyWatermark(context, { width: viewport.width, height: viewport.height, offsetX }, pagesToRender[index]);
+
+    offsetX += viewport.width;
+   }
+
+   lastRenderRef.current = {
+    page: pageNumber,
+    rotation: renderRotation,
+    scale: renderScale,
+    containerWidth,
+    containerHeight,
+    spread: pagesToRender.length,
+   };
+   setPdfReady(true);
+  } catch (err) {
+   console.error('Error rendering page:', err);
+  } finally {
+   isRenderingRef.current = false;
 
    if (pendingRenderRef.current) {
     const next = pendingRenderRef.current;
     pendingRenderRef.current = null;
     await renderPage(next.page, next.rotation, next.scale);
    }
- }
+  }
  },
- [applyWatermark, isMobile]
+ [applyWatermark, isMobile, isSpreadMode, shouldRenderSecondPage, totalPages]
 );
 const latestRenderPageRef = useRef(renderPage);
 useEffect(() => {
@@ -1074,7 +1263,7 @@ useEffect(() => {
  renderPage(pending.page, pending.rotation, pending.scale);
 }, [loading, renderPage, viewMode]);
 useEffect(() => {
-  if (!editionId || lastHotspotEditionRef.current === editionId) return;
+ if (!editionId || lastHotspotEditionRef.current === editionId) return;
 
   loadArticleHotspots(editionId)
     .then(() => {
@@ -1097,6 +1286,12 @@ useEffect(() => {
     setPendingArticleId(null);
   }
 }, [viewMode, editionId, pendingArticleId, initialArticleId]);
+
+useEffect(() => {
+ if (viewMode !== 'pdf') {
+  setTocOpen(false);
+ }
+}, [viewMode]);
 
 
  const handleZoomIn = () => setScale(prev => Math.min(prev + 0.25, 3));
@@ -1367,27 +1562,34 @@ const articleView = (() => {
       </div>
      )}
 
-     {viewMode === 'pdf' &&
-      hotspotsForCurrentPage.map((hotspot) => (
-        <button
-         key={`${hotspot.id}-${hotspot.ordre}`}
-         type="button"
-         onClick={(event) => {
-          event.stopPropagation();
-          handleHotspotClick(hotspot);
-         }}
-         className="absolute border border-transparent bg-[#1f3b63]/0 hover:bg-[#1f3b63]/10 focus-visible:bg-[#1f3b63]/12 rounded-lg transition-colors duration-200"
-         style={{
-          left: `${clamp01(hotspot.x) * 100}%`,
-          top: `${clamp01(hotspot.y) * 100}%`,
-          width: `${clamp01(hotspot.width) * 100}%`,
-          height: `${clamp01(hotspot.height) * 100}%`,
-         }}
-         title={hotspot.titre}
-        >
-         <span className="sr-only">{hotspot.titre}</span>
-        </button>
-       ))}
+      {viewMode === 'pdf' &&
+       (isSpreadMode ? hotspotsForSpread : hotspotsForCurrentPage).map((hotspot) => {
+        const spreadOffset = (hotspot as { spreadOffset?: number }).spreadOffset ?? 0;
+        const pageWidthPercent = 100 / Math.max(1, spreadSlotCount);
+        const leftPercent = spreadOffset * pageWidthPercent + clamp01(hotspot.x) * pageWidthPercent;
+        const widthPercent = clamp01(hotspot.width) * pageWidthPercent;
+
+        return (
+         <button
+          key={`${hotspot.id}-${hotspot.ordre}-${spreadOffset}`}
+          type="button"
+          onClick={(event) => {
+           event.stopPropagation();
+           handleHotspotClick(hotspot);
+          }}
+          className="absolute border border-transparent bg-[#1f3b63]/0 hover:bg-[#1f3b63]/10 focus-visible:bg-[#1f3b63]/12 rounded-lg transition-colors duration-200"
+          style={{
+           left: `${leftPercent}%`,
+           top: `${clamp01(hotspot.y) * 100}%`,
+           width: `${widthPercent}%`,
+           height: `${clamp01(hotspot.height) * 100}%`,
+          }}
+          title={hotspot.titre}
+         >
+          <span className="sr-only">{hotspot.titre}</span>
+         </button>
+        );
+       })}
      </div>
 
      {hasNextPage && (
@@ -1403,8 +1605,61 @@ const articleView = (() => {
        </span>
       </button>
      )}
-    </div>
-   </main>
+   </div>
+  </main>
+
+   {totalPages > 1 && (
+    <>
+     <button
+      type="button"
+      onClick={() => setTocOpen(prev => !prev)}
+      disabled={!pdfReady}
+      className={`fixed bottom-20 left-1/2 -translate-x-1/2 z-40 h-10 w-10 rounded-full border border-[#d7deec] bg-white text-[#1f3b63] shadow-md flex items-center justify-center transition ${
+       pdfReady ? 'hover:shadow-lg' : 'opacity-40 cursor-not-allowed'
+      }`}
+      title={tocOpen ? 'Masquer la table des matieres' : 'Afficher la table des matieres'}
+     >
+      {tocOpen ? <ChevronDown className="w-5 h-5" /> : <ChevronUp className="w-5 h-5" />}
+     </button>
+
+     <div
+      className={`fixed left-0 right-0 bottom-0 z-30 transform transition-transform duration-300 ${
+       tocOpen ? 'translate-y-0' : 'translate-y-full pointer-events-none'
+      }`}
+     >
+      <div className="mx-auto max-w-6xl bg-white/95 border-t border-[#dfe5f2] shadow-lg rounded-t-3xl px-4 py-4 backdrop-blur-md">
+       <div className="flex items-center justify-between mb-3">
+        <p className="text-xs font-semibold text-[#1f3b63] uppercase tracking-wide">
+         Table des matieres
+        </p>
+        <span className="text-[11px] text-[#60719d]">
+         {pageRangeLabel} / {totalPages}
+        </span>
+       </div>
+       <div className="flex gap-2 overflow-x-auto pb-1">
+        {Array.from({ length: totalPages }, (_, index) => {
+         const pageNumber = index + 1;
+         const isActive = activeSpreadPages.has(pageNumber);
+         return (
+          <button
+           key={pageNumber}
+           type="button"
+           onClick={() => handleSelectPage(pageNumber)}
+           className={`min-w-[56px] px-3 py-2 rounded-xl border text-xs font-medium transition-all ${
+            isActive
+             ? 'border-amber-500 bg-amber-500/15 text-amber-600 shadow-sm'
+             : 'border-[#dfe5f2] bg-white text-[#1f3b63] hover:border-amber-400 hover:bg-amber-50'
+           }`}
+          >
+           P {pageNumber}
+          </button>
+         );
+        })}
+       </div>
+      </div>
+     </div>
+    </>
+   )}
 
    {hasArticles && (
     <button
@@ -1419,7 +1674,7 @@ const articleView = (() => {
       setViewMode('article');
      }}
      disabled={checkingArticles}
-     className="fixed bottom-10 right-6 z-30 h-14 w-14 rounded-full border border-[#d7deec] bg-white text-[#1f3b63] shadow-lg hover:shadow-xl transition disabled:opacity-50"
+    className="fixed bottom-10 right-6 z-40 h-14 w-14 rounded-full border border-[#d7deec] bg-white text-[#1f3b63] shadow-lg hover:shadow-xl transition disabled:opacity-50"
      title="Mode article"
     >
      <LayoutGrid className="w-6 h-6 mx-auto" />
