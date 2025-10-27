@@ -1,346 +1,474 @@
-import { useState, useEffect, useRef } from 'react';
-import { X, ChevronLeft, ChevronRight, Type, List, Volume2, VolumeX, Maximize2, Minimize2 } from 'lucide-react';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import {
+  ChevronLeft,
+  ChevronRight,
+  BookOpen,
+  Clock,
+  FileText,
+  ArrowLeft,
+} from 'lucide-react';
+import { supabase } from '../lib/supabase';
 
 interface Article {
   id: string;
-  title: string;
-  subtitle?: string;
-  author?: string;
-  content: string;
-  pageNumber: number;
+  titre: string;
+  sous_titre: string | null;
+  auteur: string | null;
+  contenu_texte: string;
+  temps_lecture_estime: number;
+  ordre_lecture: number;
+  extraction_method: string;
+  textract_confidence?: number;
+  mots_count?: number;
 }
 
-interface ArticleViewProps {
-  articles: Article[];
-  currentArticleIndex: number;
-  isOpen: boolean;
-  onClose: () => void;
-  onNavigate: (index: number) => void;
+interface ArticleReaderProps {
+  editionId: string;
+  userId: string;
+  userName: string;
+  userNumber: string;
+  sessionId: string;
+  onBackToPDF: () => void;
+  initialArticleId?: string | null;
+  onArticleChange?: (articleId: string) => void;
+  editionLabel?: string;
 }
 
-export function ArticleView({
-  articles,
-  currentArticleIndex,
-  isOpen,
-  onClose,
-  onNavigate
-}: ArticleViewProps) {
-  const [fontSize, setFontSize] = useState(18);
-  const [showArticleList, setShowArticleList] = useState(false);
-  const [isMobile, setIsMobile] = useState(false);
-  const [showControls, setShowControls] = useState(true);
-  const [isFullscreen, setIsFullscreen] = useState(false);
-  const hideControlsTimeout = useRef<NodeJS.Timeout>();
-  const articleRef = useRef<HTMLDivElement>(null);
-
-  const currentArticle = articles[currentArticleIndex];
+export function ArticleReader({
+  editionId,
+  userId,
+  userName,
+  userNumber,
+  sessionId,
+  onBackToPDF,
+  initialArticleId,
+  onArticleChange,
+  editionLabel,
+}: ArticleReaderProps) {
+  const [articles, setArticles] = useState<Article[]>([]);
+  const [currentIndex, setCurrentIndex] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [readArticles, setReadArticles] = useState<Set<string>>(new Set());
+  const [articleProgress, setArticleProgress] = useState(0);
+  const articleStartTimeRef = useRef(Date.now());
+  const syncingFromPropRef = useRef(false);
+  const previousArticleIdRef = useRef<string | null>(null);
+  const articleContentRef = useRef<HTMLDivElement | null>(null);
+  const articleProgressRef = useRef(0);
+  const rafRef = useRef<number | null>(null);
 
   useEffect(() => {
-    const checkMobile = () => {
-      setIsMobile(window.innerWidth < 768);
-    };
-    checkMobile();
-    window.addEventListener('resize', checkMobile);
-    return () => window.removeEventListener('resize', checkMobile);
+    loadArticles();
+  }, [editionId]);
+
+  useEffect(() => {
+    if (!articles.length || !initialArticleId) {
+      return;
+    }
+
+    const index = articles.findIndex(article => article.id === initialArticleId);
+    if (index < 0) {
+      return;
+    }
+
+    if (
+      previousArticleIdRef.current &&
+      initialArticleId === previousArticleIdRef.current &&
+      index !== currentIndex
+    ) {
+      return;
+    }
+
+    if (index !== currentIndex) {
+      syncingFromPropRef.current = true;
+      setCurrentIndex(index);
+    }
+  }, [articles, initialArticleId, currentIndex]);
+
+  const currentArticle = articles[currentIndex];
+  const currentArticleId = currentArticle?.id;
+
+  const updateArticleProgress = useCallback(() => {
+    if (typeof window === 'undefined') return;
+
+    const element = articleContentRef.current;
+    if (!element) {
+      if (articleProgressRef.current !== 0) {
+        articleProgressRef.current = 0;
+        setArticleProgress(0);
+      }
+      return;
+    }
+
+    const rect = element.getBoundingClientRect();
+    const viewportHeight = window.innerHeight || 1;
+    const articleHeight = element.offsetHeight || 1;
+
+    let nextProgress = 0;
+
+    if (rect.top >= 0) {
+      nextProgress = 0;
+    } else if (rect.bottom <= viewportHeight) {
+      nextProgress = 100;
+    } else {
+      const maxScrollable = Math.max(articleHeight - viewportHeight, 1);
+      nextProgress = Math.min(Math.max(-rect.top / maxScrollable, 0), 1) * 100;
+    }
+
+    const clamped = Math.max(0, Math.min(100, Number(nextProgress.toFixed(2))));
+    if (Math.abs(clamped - articleProgressRef.current) > 0.5) {
+      articleProgressRef.current = clamped;
+      setArticleProgress(clamped);
+    }
   }, []);
 
+  const scheduleProgressUpdate = useCallback(() => {
+    if (typeof window === 'undefined') return;
+    if (rafRef.current !== null) {
+      window.cancelAnimationFrame(rafRef.current);
+    }
+    rafRef.current = window.requestAnimationFrame(updateArticleProgress);
+  }, [updateArticleProgress]);
+
   useEffect(() => {
-    if (isOpen) {
-      document.body.style.overflow = 'hidden';
-      if (isMobile) {
-        setShowControls(true);
-        startHideControlsTimer();
-      }
+    if (!currentArticleId) return;
+
+    const article = articles.find(item => item.id === currentArticleId);
+    if (!article) return;
+
+    const isSameArticle =
+      previousArticleIdRef.current === currentArticleId && !syncingFromPropRef.current;
+
+    const isSyncingToTarget =
+      syncingFromPropRef.current &&
+      initialArticleId &&
+      currentArticleId !== initialArticleId;
+
+    if (isSyncingToTarget) {
+      return;
+    }
+
+    if (isSameArticle) {
+      return;
+    }
+
+    trackArticleView(article);
+
+    if (syncingFromPropRef.current) {
+      syncingFromPropRef.current = false;
     } else {
-      document.body.style.overflow = 'unset';
+      onArticleChange?.(currentArticleId);
+    }
+
+    previousArticleIdRef.current = currentArticleId;
+    articleStartTimeRef.current = Date.now();
+
+    if (articleContentRef.current) {
+      articleContentRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
+    return () => {
+      logReadingTime(article);
+    };
+  }, [currentArticleId, articles, initialArticleId, onArticleChange]);
+
+  useEffect(() => {
+    scheduleProgressUpdate();
+    if (typeof window !== 'undefined') {
+      window.addEventListener('scroll', scheduleProgressUpdate, { passive: true });
+      window.addEventListener('resize', scheduleProgressUpdate);
     }
     return () => {
-      document.body.style.overflow = 'unset';
-      if (hideControlsTimeout.current) {
-        clearTimeout(hideControlsTimeout.current);
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('scroll', scheduleProgressUpdate);
+        window.removeEventListener('resize', scheduleProgressUpdate);
+        if (rafRef.current !== null) {
+          window.cancelAnimationFrame(rafRef.current);
+          rafRef.current = null;
+        }
       }
     };
-  }, [isOpen, isMobile]);
+  }, [scheduleProgressUpdate]);
 
   useEffect(() => {
-    if (articleRef.current) {
-      articleRef.current.scrollTop = 0;
-    }
-  }, [currentArticleIndex]);
+    articleProgressRef.current = 0;
+    setArticleProgress(0);
+    scheduleProgressUpdate();
+  }, [currentArticleId, scheduleProgressUpdate]);
 
-  const startHideControlsTimer = () => {
-    if (hideControlsTimeout.current) {
-      clearTimeout(hideControlsTimeout.current);
-    }
-    hideControlsTimeout.current = setTimeout(() => {
-      if (isMobile) {
-        setShowControls(false);
+  const loadArticles = async () => {
+    setLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from('articles')
+        .select('*')
+        .eq('edition_id', editionId)
+        .order('ordre_lecture', { ascending: true });
+
+      if (error) throw error;
+      setArticles(data || []);
+
+      const { data: lecturesData } = await supabase
+        .from('lectures_articles')
+        .select('article_id')
+        .eq('user_id', userId);
+
+      if (lecturesData) {
+        setReadArticles(new Set(lecturesData.map(l => l.article_id)));
       }
-    }, 3000);
-  };
-
-  const handleUserInteraction = () => {
-    if (isMobile) {
-      setShowControls(true);
-      startHideControlsTimer();
+    } catch (error) {
+      console.error('Error loading articles:', error);
+    } finally {
+      setLoading(false);
     }
   };
 
-  const toggleFullscreen = () => {
-    if (!document.fullscreenElement) {
-      document.documentElement.requestFullscreen();
-      setIsFullscreen(true);
-    } else {
-      document.exitFullscreen();
-      setIsFullscreen(false);
+  const trackArticleView = async (article: Article) => {
+    try {
+      await supabase.from('lectures_articles').upsert(
+        {
+          user_id: userId,
+          article_id: article.id,
+          complete: false,
+        },
+        { onConflict: 'user_id,article_id' }
+      );
+
+      setReadArticles(prev => new Set(prev).add(article.id));
+    } catch (error) {
+      console.error('Error tracking article view:', error);
     }
   };
 
-  const handleKeyDown = (e: KeyboardEvent) => {
-    if (e.key === 'ArrowLeft' && currentArticleIndex > 0) {
-      onNavigate(currentArticleIndex - 1);
-    } else if (e.key === 'ArrowRight' && currentArticleIndex < articles.length - 1) {
-      onNavigate(currentArticleIndex + 1);
-    } else if (e.key === 'Escape') {
-      onClose();
+  const logReadingTime = async (article: Article) => {
+    const timeSpent = Math.floor((Date.now() - articleStartTimeRef.current) / 1000);
+    if (timeSpent < 5) return;
+
+    try {
+      await supabase.from('lectures_articles').upsert(
+        {
+          user_id: userId,
+          article_id: article.id,
+          temps_lecture_secondes: timeSpent,
+          complete: timeSpent > 30,
+          pourcentage_lu: 100,
+        },
+        { onConflict: 'user_id,article_id' }
+      );
+    } catch (error) {
+      console.error('Error logging reading time:', error);
     }
   };
 
-  useEffect(() => {
-    if (isOpen) {
-      window.addEventListener('keydown', handleKeyDown);
-      return () => window.removeEventListener('keydown', handleKeyDown);
-    }
-  }, [isOpen, currentArticleIndex, articles.length]);
+  const progress =
+    articles.length > 0
+      ? ((currentIndex + articleProgress / 100) / articles.length) * 100
+      : 0;
+  const hasPrevious = currentIndex > 0;
+  const hasNext = currentIndex < articles.length - 1;
 
-  if (!isOpen || !currentArticle) return null;
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-[#f1f2f6] flex items-center justify-center">
+        <div className="flex flex-col items-center gap-4">
+          <div className="h-14 w-14 rounded-full border-4 border-[#d7deec] border-t-[#1f3b63] animate-spin" />
+          <p className="text-[#1f3b63] text-sm sm:text-base font-medium">Chargement des articles...</p>
+        </div>
+      </div>
+    );
+  }
 
-  const hasPrevious = currentArticleIndex > 0;
-  const hasNext = currentArticleIndex < articles.length - 1;
+  if (articles.length === 0) {
+    return (
+      <div className="min-h-screen bg-[#f1f2f6] flex items-center justify-center px-4">
+        <div className="max-w-md w-full bg-white border border-[#dfe5f2] shadow-xl rounded-3xl px-8 py-10 text-center">
+          <FileText className="w-16 h-16 text-[#94a3c0] mx-auto mb-6" />
+          <h2 className="text-xl font-semibold text-[#1f3b63] mb-2">Aucun article disponible</h2>
+          <p className="text-sm text-[#60719d] mb-6">
+            Cette edition n'a pas encore ete traitee pour l'extraction d'articles.
+          </p>
+          <button
+            onClick={onBackToPDF}
+            className="inline-flex items-center gap-2 px-5 py-2.5 rounded-full border border-[#d7deec] bg-white text-[#1f3b63] font-medium shadow-sm hover:shadow transition"
+          >
+            <ArrowLeft className="w-4 h-4" />
+            Retour au PDF
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div
-      className="fixed inset-0 z-50 bg-white"
-      onClick={isMobile ? handleUserInteraction : undefined}
-    >
-      {/* Header */}
-      <div
-        className={`fixed top-0 left-0 right-0 z-50 bg-white border-b border-gray-200 transition-all duration-300 ${
-          isMobile && !showControls ? '-translate-y-full' : 'translate-y-0'
-        }`}
-      >
-        <div className="flex items-center justify-between px-4 py-3 md:px-6">
-          {/* Left side */}
-          <div className="flex items-center gap-2">
+    <div className="relative min-h-screen bg-[#f1f2f6] text-[#1f3b63]">
+      <header className="sticky top-0 left-0 right-0 z-40 bg-white/95 border-b border-[#dfe5f2] shadow-sm backdrop-blur">
+        <div className="max-w-4xl mx-auto h-14 sm:h-16 px-4 lg:px-6 flex items-center justify-between">
+          <div className="flex items-center gap-3 lg:gap-4">
             <button
-              onClick={onClose}
-              className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
-              title="Fermer"
+              onClick={onBackToPDF}
+              className="h-10 w-10 rounded-full border border-[#d7deec] bg-white text-[#1f3b63] flex items-center justify-center shadow-sm hover:shadow-md transition hover:-translate-x-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-[#1f3b63]"
+              title="Retour au PDF"
             >
-              <X className="w-5 h-5 md:w-6 md:h-6 text-gray-700" />
+              <ArrowLeft className="w-4 h-4" />
             </button>
 
-            {!isMobile && (
-              <>
-                <div className="w-px h-6 bg-gray-300 mx-1"></div>
-                <button
-                  onClick={() => setShowArticleList(!showArticleList)}
-                  className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
-                  title="Liste des articles"
-                >
-                  <List className="w-5 h-5 text-gray-700" />
-                </button>
-              </>
-            )}
-          </div>
-
-          {/* Center - Title (desktop only) */}
-          {!isMobile && (
-            <div className="flex-1 text-center px-4">
-              <h2 className="font-bold text-sm text-gray-800 truncate">
-                {currentArticle.title}
-              </h2>
-            </div>
-          )}
-
-          {/* Right side */}
-          <div className="flex items-center gap-2">
-            <div className="flex items-center gap-1 px-2 py-1 bg-gray-100 rounded-lg">
-              <button
-                onClick={() => setFontSize(prev => Math.max(14, prev - 2))}
-                disabled={fontSize <= 14}
-                className="p-1 hover:bg-gray-200 rounded disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-                title="Réduire la taille"
-              >
-                <Type className="w-3 h-3 md:w-4 md:h-4 text-gray-700" />
-              </button>
-              <span className="text-xs md:text-sm text-gray-600 font-medium px-1 min-w-[2rem] text-center">
-                {fontSize}
+            <div className="flex items-center gap-3 min-w-0">
+              <span className="inline-flex px-3 py-1 rounded-full border border-[#d0d8e8] bg-white text-[#1f3b63] font-semibold text-xs sm:text-sm uppercase tracking-[0.18em]">
+                L ENQUETEUR
               </span>
-              <button
-                onClick={() => setFontSize(prev => Math.min(28, prev + 2))}
-                disabled={fontSize >= 28}
-                className="p-1 hover:bg-gray-200 rounded disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-                title="Augmenter la taille"
-              >
-                <Type className="w-4 h-4 md:w-5 md:h-5 text-gray-700" />
-              </button>
+              {editionLabel && (
+                <span className="text-sm sm:text-base font-medium text-[#1f3b63] truncate">
+                  {editionLabel}
+                </span>
+              )}
+              {articles.length > 0 && (
+                <span className="sm:hidden text-[11px] font-semibold text-[#60719d] uppercase tracking-wide">
+                  Article {currentIndex + 1} / {articles.length}
+                </span>
+              )}
             </div>
+          </div>
 
-            {!isMobile && (
-              <button
-                onClick={toggleFullscreen}
-                className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
-                title={isFullscreen ? "Quitter le plein écran" : "Plein écran"}
-              >
-                {isFullscreen ? (
-                  <Minimize2 className="w-5 h-5 text-gray-700" />
-                ) : (
-                  <Maximize2 className="w-5 h-5 text-gray-700" />
-                )}
-              </button>
-            )}
+          <div className="flex items-center gap-3 sm:gap-4 text-xs sm:text-sm font-medium flex-wrap justify-end">
+            <div className="hidden sm:flex items-center gap-2 text-[#1f3b63]">
+              <BookOpen className="w-4 h-4" />
+              <span>
+                Article {currentIndex + 1} / {articles.length}
+              </span>
+            </div>
+            <span className="text-[#60719d]">
+              {readArticles.size}/{articles.length} lus
+            </span>
           </div>
         </div>
-      </div>
+        <div className="h-1 bg-[#e2e7f3]">
+          <div
+            className="h-full bg-[#1f3b63] transition-all duration-500"
+            style={{ width: `${progress}%` }}
+          />
+        </div>
+      </header>
 
-      {/* Article List Sidebar (desktop only) */}
-      {showArticleList && !isMobile && (
-        <div
-          className="fixed top-16 left-4 w-80 max-h-[calc(100vh-5rem)] bg-white rounded-lg shadow-2xl border border-gray-200 overflow-y-auto z-40 animate-in slide-in-from-left duration-200"
-          onClick={(e) => e.stopPropagation()}
+      {hasPrevious && (
+        <button
+          type="button"
+          onClick={() => setCurrentIndex(i => Math.max(0, i - 1))}
+          className="hidden lg:flex fixed left-6 top-1/2 -translate-y-1/2 z-30 flex-col items-center gap-1 px-3 py-4 rounded-full bg-white border border-[#d7deec] text-[#1f3b63] shadow-lg hover:-translate-x-1 hover:shadow-xl transition disabled:opacity-40 disabled:hover:translate-x-0"
+          disabled={!hasPrevious}
         >
-          <div className="p-4">
-            <h3 className="text-gray-800 font-bold text-sm mb-3">Articles de cette page</h3>
-            <div className="space-y-2">
-              {articles.map((article, index) => (
-                <button
-                  key={article.id}
-                  onClick={() => {
-                    onNavigate(index);
-                    setShowArticleList(false);
-                  }}
-                  className={`w-full text-left px-3 py-2.5 rounded-lg transition-all ${
-                    index === currentArticleIndex
-                      ? 'bg-blue-50 border border-blue-200 text-blue-900'
-                      : 'hover:bg-gray-50 text-gray-700 border border-transparent'
-                  }`}
-                >
-                  <div className="text-sm font-medium line-clamp-2">{article.title}</div>
-                  <div className="text-xs text-gray-500 mt-1">Page {article.pageNumber}</div>
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
+          <ChevronLeft className="w-5 h-5" />
+          <span className="text-[11px] font-semibold uppercase tracking-wide text-[#60719d]">
+            Art. {currentIndex}
+          </span>
+        </button>
       )}
 
-      {/* Main Content */}
-      <div
-        ref={articleRef}
-        className={`h-full overflow-y-auto scroll-smooth ${
-          isMobile ? 'pt-16 pb-20' : 'pt-20 pb-24'
-        }`}
-        style={{
-          scrollBehavior: 'smooth',
-          WebkitOverflowScrolling: 'touch'
-        }}
-      >
-        <article className="max-w-3xl mx-auto px-4 md:px-8 py-6 md:py-12">
-          {/* Article Header */}
-          <div className="mb-8 md:mb-12">
-            {/* Category/Section */}
-            <div className="inline-block px-3 py-1 bg-blue-50 border border-blue-100 rounded-full mb-4">
-              <span className="text-blue-700 text-xs md:text-sm font-semibold uppercase tracking-wide">
-                Page {currentArticle.pageNumber}
-              </span>
-            </div>
+      {hasNext && (
+        <button
+          type="button"
+          onClick={() => setCurrentIndex(i => Math.min(articles.length - 1, i + 1))}
+          className="hidden lg:flex fixed right-6 top-1/2 -translate-y-1/2 z-30 flex-col items-center gap-1 px-3 py-4 rounded-full bg-white border border-[#d7deec] text-[#1f3b63] shadow-lg hover:translate-x-1 hover:shadow-xl transition disabled:opacity-40 disabled:hover:translate-x-0"
+          disabled={!hasNext}
+        >
+          <ChevronRight className="w-5 h-5" />
+          <span className="text-[11px] font-semibold uppercase tracking-wide text-[#60719d]">
+            Art. {currentIndex + 2}
+          </span>
+        </button>
+      )}
 
-            {/* Title */}
-            <h1 className="text-2xl md:text-4xl lg:text-5xl font-bold text-gray-900 mb-4 md:mb-6 leading-tight">
-              {currentArticle.title}
-            </h1>
-
-            {/* Subtitle */}
-            {currentArticle.subtitle && (
-              <h2 className="text-lg md:text-xl lg:text-2xl font-medium text-gray-600 mb-4 md:mb-6 leading-relaxed">
-                {currentArticle.subtitle}
-              </h2>
-            )}
-
-            {/* Author */}
-            {currentArticle.author && (
-              <div className="flex items-center gap-3 pt-4 border-t border-gray-200">
-                <div className="w-10 h-10 md:w-12 md:h-12 rounded-full bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center text-white font-bold text-base md:text-lg">
-                  {currentArticle.author.charAt(0).toUpperCase()}
-                </div>
-                <div>
-                  <p className="text-xs text-gray-500">Par</p>
-                  <p className="text-gray-900 font-semibold text-sm md:text-base">{currentArticle.author}</p>
+      <main className="pt-20 sm:pt-24 pb-32 sm:pb-24 px-4">
+        <div className="max-w-4xl mx-auto space-y-10">
+          <article
+            ref={articleContentRef}
+            className="bg-white border border-[#dfe5f2] shadow-xl rounded-3xl px-5 sm:px-10 py-8 sm:py-14"
+          >
+            <div className="flex flex-col gap-6 border-b border-[#e2e7f3] pb-6">
+              <div className="flex items-start justify-between gap-6">
+                <div className="flex-1 min-w-0">
+                  <h1 className="text-3xl sm:text-4xl md:text-5xl font-extrabold text-[#0f1f40] leading-tight tracking-tight">
+                    {currentArticle.titre}
+                  </h1>
+                  {currentArticle.sous_titre && (
+                    <h2 className="text-lg sm:text-xl md:text-2xl text-[#3a4c73] mt-4 leading-relaxed font-medium italic">
+                      {currentArticle.sous_titre}
+                    </h2>
+                  )}
                 </div>
               </div>
-            )}
-          </div>
 
-          {/* Article Content */}
-          <div
-            className="prose prose-lg max-w-none"
-            style={{
-              fontSize: `${fontSize}px`,
-              lineHeight: '1.75',
-              color: '#1f2937'
-            }}
-          >
-            {currentArticle.content.split('\n\n').map((paragraph, index) => (
-              <p
-                key={index}
-                className={`mb-6 text-gray-800 ${
-                  index === 0 ? 'first-letter:text-6xl first-letter:font-bold first-letter:text-blue-600 first-letter:mr-2 first-letter:float-left first-letter:leading-[0.9]' : ''
-                }`}
-                style={{
-                  textAlign: 'justify',
-                  hyphens: 'auto'
-                }}
-              >
-                {paragraph}
-              </p>
-            ))}
-          </div>
-        </article>
-      </div>
+              <div className="flex flex-wrap items-center gap-4 text-xs sm:text-sm text-[#56658b]">
+                {currentArticle.auteur && (
+                  <div className="flex items-center gap-2">
+                    <div className="w-9 h-9 rounded-full bg-[#1f3b63] text-white flex items-center justify-center text-sm font-semibold">
+                      {currentArticle.auteur.charAt(0).toUpperCase()}
+                    </div>
+                    <div>
+                      <p className="text-[11px] uppercase tracking-wide text-[#94a3c0]">Par</p>
+                      <p className="font-medium text-[#1f3b63]">{currentArticle.auteur}</p>
+                    </div>
+                  </div>
+                )}
 
-      {/* Footer Navigation */}
-      <div
-        className={`fixed bottom-0 left-0 right-0 z-50 bg-white border-t border-gray-200 transition-all duration-300 ${
-          isMobile && !showControls ? 'translate-y-full' : 'translate-y-0'
-        }`}
-      >
-        <div className="flex items-center justify-between px-4 py-3 md:px-6 md:py-4">
-          <button
-            onClick={() => onNavigate(currentArticleIndex - 1)}
-            disabled={!hasPrevious}
-            className="flex items-center gap-2 px-3 py-2 md:px-4 md:py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg disabled:opacity-30 disabled:cursor-not-allowed transition-all font-medium text-sm"
-          >
-            <ChevronLeft className="w-4 h-4 md:w-5 md:h-5" />
-            <span className="hidden sm:inline">Précédent</span>
-          </button>
+                <div className="flex items-center gap-2">
+                  <Clock className="w-4 h-4 text-[#1f3b63]" />
+                  <span className="font-medium text-[#1f3b63]">
+                    {Math.ceil(currentArticle.temps_lecture_estime / 60)} min de lecture
+                  </span>
+                </div>
 
-          <div className="text-center">
-            <div className="text-gray-600 text-xs md:text-sm font-medium">
-              Article {currentArticleIndex + 1} sur {articles.length}
+                {currentArticle.extraction_method === 'textract' && (
+                  <span className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-[#cfe0f7] bg-[#eef4ff] text-[#1f3b63] font-semibold text-xs uppercase tracking-wide">
+                    Extraction IA
+                  </span>
+                )}
+              </div>
+            </div>
+
+            <div
+              className="mt-8 text-[#30436b] leading-relaxed space-y-6 text-base sm:text-lg"
+              style={{
+                lineHeight: 1.8,
+                letterSpacing: '0.01em',
+              }}
+            >
+              {currentArticle.contenu_texte.split('\n\n').map((paragraph, index) => (
+                <p
+                  key={index}
+                  className="mb-6 first:first-letter:text-5xl first:first-letter:font-bold first:first-letter:text-[#1f3b63] first:first-letter:mr-3 first:first-letter:float-left first:first-letter:leading-[0.8]"
+                >
+                  {paragraph}
+                </p>
+              ))}
+            </div>
+          </article>
+
+          <div className="bg-white border border-[#dfe5f2] shadow-md rounded-2xl px-6 py-5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 text-sm text-[#60719d]">
+            <div className="flex items-center gap-2 font-semibold text-[#1f3b63]">
+              <BookOpen className="w-4 h-4" />
+              <span>Lecture securisee</span>
+            </div>
+            <div className="flex flex-wrap items-center gap-3 sm:justify-end text-xs sm:text-sm font-mono">
+              <span>{userName}</span>
+              <span className="opacity-40">-</span>
+              <span>{userNumber}</span>
+              <span className="opacity-40">-</span>
+              <span>{sessionId.substring(0, 8).toUpperCase()}</span>
             </div>
           </div>
-
-          <button
-            onClick={() => onNavigate(currentArticleIndex + 1)}
-            disabled={!hasNext}
-            className="flex items-center gap-2 px-3 py-2 md:px-4 md:py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg disabled:opacity-30 disabled:cursor-not-allowed transition-all shadow-md font-medium text-sm"
-          >
-            <span className="hidden sm:inline">Suivant</span>
-            <ChevronRight className="w-4 h-4 md:w-5 md:h-5" />
-          </button>
         </div>
-      </div>
+      </main>
+
+      <style>{`
+        @media print {
+          * { display: none !important; }
+        }
+
+        * {
+          user-select: none !important;
+          -webkit-user-select: none !important;
+        }
+      `}</style>
     </div>
   );
 }
