@@ -15,5 +15,4 @@
 })();
 
 // Chargement du worker officiel pdf.js
-importScripts('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js');
-
+importScripts('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.worker.min.js');
