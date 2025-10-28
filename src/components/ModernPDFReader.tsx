@@ -17,6 +17,10 @@ import { supabase, Edition } from '../lib/supabase';
 import { ensurePromiseWithResolvers } from '../utils/ensurePromiseWithResolvers';
 ensurePromiseWithResolvers();
 import { ArticleReader } from './ArticleReader';
+import * as pdfjsLib from 'pdfjs-dist';
+import pdfjsWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
+
+pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker;
 
 interface ReaderAccessData {
  tokenId?: string;
@@ -136,90 +140,12 @@ const buildPdfPathCandidates = (rawPath: string | null | undefined) => {
  return { paths: Array.from(result), fileName };
 };
 
-let pdfJsLibPromise: Promise<void> | null = null;
-let pdfWorkerPatched = false;
 const ACCESS_CACHE_KEY_PREFIX = 'modern-pdf-token:';
 const ACCESS_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
-const ensurePdfWorkerPolyfill = () => {
- if (pdfWorkerPatched || typeof window === 'undefined' || typeof window.Worker === 'undefined') {
-  return;
- }
-
- const OriginalWorker = window.Worker;
-  const PatchedWorker = function (this: Worker, scriptURL: string | URL, options?: WorkerOptions) {
-  const url = typeof scriptURL === 'string' ? scriptURL : scriptURL.toString();
-  if (/pdf\.worker/i.test(url)) {
-   const polyfillSource = `
-    if (typeof Promise !== 'undefined' && typeof Promise.withResolvers !== 'function') {
-      Promise.withResolvers = function withResolvers() {
-        let resolve;
-        let reject;
-        const promise = new Promise((res, rej) => {
-          resolve = res;
-          reject = rej;
-        });
-        return { promise, resolve, reject };
-      };
-    }
-    importScripts("${url}");
-   `;
-   const blob = new Blob([polyfillSource], { type: 'application/javascript' });
-   const blobUrl = URL.createObjectURL(blob);
-   const workerInstance = new OriginalWorker(blobUrl, options);
-   const revoke = () => URL.revokeObjectURL(blobUrl);
-   workerInstance.addEventListener('message', revoke, { once: true });
-   workerInstance.addEventListener('error', revoke, { once: true });
-   return workerInstance;
-  }
-  return new OriginalWorker(scriptURL, options);
- } as typeof Worker;
-
- PatchedWorker.prototype = OriginalWorker.prototype;
- window.Worker = PatchedWorker;
- pdfWorkerPatched = true;
-};
-
 const ensurePdfJsLib = (): Promise<void> => {
  ensurePromiseWithResolvers();
- ensurePdfWorkerPolyfill();
- if (typeof window === 'undefined') return Promise.resolve();
- if ((window as any).pdfjsLib) {
-  const lib = (window as any).pdfjsLib;
-  if (lib?.GlobalWorkerOptions) {
-   lib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-  }
-  return Promise.resolve();
- }
-
- if (!pdfJsLibPromise) {
-  pdfJsLibPromise = new Promise((resolve, reject) => {
-   const existing = document.querySelector<HTMLScriptElement>('script[data-pdfjs]');
-   if (existing) {
-    existing.addEventListener('load', () => resolve());
-    existing.addEventListener('error', reject);
-    return;
-   }
-
-   const script = document.createElement('script');
-   script.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
-   script.async = true;
-   script.dataset.pdfjs = 'true';
-   script.onload = () => {
-    const pdfjsLib = (window as any).pdfjsLib;
-    if (pdfjsLib) {
-     pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-     resolve();
-    } else {
-     reject(new Error('pdfjsLib unavailable apres chargement du script'));
-    }
-   };
-   script.onerror = reject;
-   document.head.appendChild(script);
- });
- }
-
- return pdfJsLibPromise;
+ return Promise.resolve();
 };
 
 const readCachedAccessData = (token: string): ReaderAccessData | null => {
@@ -1305,9 +1231,9 @@ useEffect(() => {
     }
    }
 
-   const loadingTask = window.pdfjsLib.getDocument({
+   const loadingTask = pdfjsLib.getDocument({
     url: pdfUrl,
-    cMapUrl: 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/cmaps/',
+    cMapUrl: 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/cmaps/',
     cMapPacked: true,
    });
 
