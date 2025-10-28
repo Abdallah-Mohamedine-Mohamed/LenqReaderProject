@@ -136,78 +136,62 @@ const buildPdfPathCandidates = (rawPath: string | null | undefined) => {
  return { paths: Array.from(result), fileName };
 };
 
+const PDF_JS_VERSION = '3.11.174';
+const PDF_JS_SCRIPT_URL = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${PDF_JS_VERSION}/pdf.min.js`;
+const PDF_JS_WORKER_SRC = '/pdf.worker-compat.js';
+
 let pdfJsLibPromise: Promise<void> | null = null;
-let workerBlobUrl: string | null = null;
 const ACCESS_CACHE_KEY_PREFIX = 'modern-pdf-token:';
 const ACCESS_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
+const configurePdfJsLib = (lib: any) => {
+ try {
+  if (lib?.GlobalWorkerOptions) {
+   lib.GlobalWorkerOptions.workerSrc = PDF_JS_WORKER_SRC;
+  }
+  if (typeof lib.disableWorker === 'boolean') {
+   lib.disableWorker = false;
+  }
+ } catch (err) {
+  console.warn('Impossible de configurer pdf.js', err);
+ }
+};
 
 const ensurePdfJsLib = (): Promise<void> => {
  ensurePromiseWithResolvers();
  if (typeof window === 'undefined') return Promise.resolve();
 
- if ((window as any).pdfjsLib) {
-  const lib = (window as any).pdfjsLib;
-  if (lib?.GlobalWorkerOptions) {
-   if (workerBlobUrl) {
-    URL.revokeObjectURL(workerBlobUrl);
-    workerBlobUrl = null;
-   }
-   const workerScript = `
-    if (typeof Promise !== 'undefined' && typeof Promise.withResolvers !== 'function') {
-      Promise.withResolvers = function withResolvers() {
-        let resolve;
-        let reject;
-        const promise = new Promise((res, rej) => { resolve = res; reject = rej; });
-        return { promise, resolve, reject };
-      };
-    }
-    importScripts('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.worker.min.js');
-   `;
-   workerBlobUrl = URL.createObjectURL(
-    new Blob([workerScript], { type: 'application/javascript' })
-   );
-   lib.GlobalWorkerOptions.workerSrc = workerBlobUrl;
-   lib.disableWorker = false;
-  }
+ const existingLib = (window as any).pdfjsLib;
+ if (existingLib) {
+  configurePdfJsLib(existingLib);
   return Promise.resolve();
  }
 
  if (!pdfJsLibPromise) {
   pdfJsLibPromise = new Promise((resolve, reject) => {
-   const existing = document.querySelector<HTMLScriptElement>('script[data-pdfjs]');
-   if (existing) {
-    existing.addEventListener('load', () => resolve());
-    existing.addEventListener('error', reject);
+   const existingScript = document.querySelector<HTMLScriptElement>('script[data-pdfjs]');
+   if (existingScript) {
+    existingScript.addEventListener('load', () => {
+     try {
+      configurePdfJsLib((window as any).pdfjsLib);
+      resolve();
+     } catch (err) {
+      reject(err);
+     }
+    });
+    existingScript.addEventListener('error', reject);
     return;
    }
 
    const script = document.createElement('script');
-   script.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.min.js';
+   script.src = PDF_JS_SCRIPT_URL;
    script.async = true;
+   script.crossOrigin = 'anonymous';
    script.dataset.pdfjs = 'true';
    script.onload = () => {
     const pdfjsLib = (window as any).pdfjsLib;
     if (pdfjsLib) {
-     if (workerBlobUrl) {
-      URL.revokeObjectURL(workerBlobUrl);
-      workerBlobUrl = null;
-     }
-     const workerScript = `
-      if (typeof Promise !== 'undefined' && typeof Promise.withResolvers !== 'function') {
-        Promise.withResolvers = function withResolvers() {
-          let resolve;
-          let reject;
-          const promise = new Promise((res, rej) => { resolve = res; reject = rej; });
-          return { promise, resolve, reject };
-        };
-      }
-      importScripts('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.worker.min.js');
-     `;
-     workerBlobUrl = URL.createObjectURL(
-      new Blob([workerScript], { type: 'application/javascript' })
-     );
-     pdfjsLib.GlobalWorkerOptions.workerSrc = workerBlobUrl;
-     pdfjsLib.disableWorker = false;
+     configurePdfJsLib(pdfjsLib);
      resolve();
     } else {
      reject(new Error('pdfjsLib unavailable apres chargement du script'));
@@ -215,7 +199,7 @@ const ensurePdfJsLib = (): Promise<void> => {
    };
    script.onerror = reject;
    document.head.appendChild(script);
- });
+  });
  }
 
  return pdfJsLibPromise;
@@ -1306,7 +1290,7 @@ useEffect(() => {
 
    const loadingTask = window.pdfjsLib.getDocument({
     url: pdfUrl,
-    cMapUrl: 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/cmaps/',
+    cMapUrl: 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/cmaps/',
     cMapPacked: true,
    });
 
@@ -1908,3 +1892,4 @@ declare global {
   pdfDocument: any;
  }
 }
+
