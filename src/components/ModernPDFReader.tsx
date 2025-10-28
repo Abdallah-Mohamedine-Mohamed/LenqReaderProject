@@ -1908,4 +1908,3 @@ declare global {
   pdfDocument: any;
  }
 }
-
