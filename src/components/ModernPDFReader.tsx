@@ -1873,4 +1873,3 @@ declare global {
   pdfDocument: any;
  }
 }
-
