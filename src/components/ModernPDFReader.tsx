@@ -1022,6 +1022,10 @@ const spreadSlotCount = currentHasSecondPage ? 2 : 1;
 const previousPageLabel = formatPageLabel(previousTargetPage);
 const nextPageLabel = formatPageLabel(nextTargetPage);
 const hotspotsForCurrentPage = articleHotspots[currentPage] || [];
+const hasAnyHotspot = useMemo(
+ () => Object.values(articleHotspots).some((list) => Array.isArray(list) && list.length > 0),
+ [articleHotspots]
+);
 
 const activeSpreadPages = useMemo(() => {
  const pages = new Set<number>();
@@ -1437,23 +1441,28 @@ const handleRotate = () => setRotation(prev => (prev + 90) % 360);
 
 const openArticleMode = useCallback(
  (targetArticleId?: string | null) => {
-  if (!hasArticles) return;
+  if (!hasArticles && !hasAnyHotspot) {
+   return;
+  }
 
-  if (targetArticleId) {
-   setPendingArticleId(targetArticleId);
+  const resolvedTarget =
+   targetArticleId ||
+   initialArticleId ||
+   firstArticleId ||
+   Object.values(articleHotspots).find((list) => list?.length)?.[0]?.id ||
+   null;
+
+  if (resolvedTarget) {
+   setPendingArticleId(resolvedTarget);
    if (editionId) {
-    setInitialArticleId(targetArticleId);
-   }
-  } else if (!initialArticleId && firstArticleId) {
-   setPendingArticleId(firstArticleId);
-   if (editionId) {
-    setInitialArticleId(firstArticleId);
+    setInitialArticleId(resolvedTarget);
    }
   }
 
+  setTocOpen(false);
   setViewMode('article');
  },
- [editionId, firstArticleId, hasArticles, initialArticleId]
+ [articleHotspots, editionId, firstArticleId, hasAnyHotspot, hasArticles, initialArticleId]
 );
 
 const handleHotspotActivate = useCallback(
