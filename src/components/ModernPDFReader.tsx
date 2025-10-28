@@ -148,6 +148,9 @@ const ensurePdfJsLib = (): Promise<void> => {
   if (lib?.GlobalWorkerOptions) {
    lib.GlobalWorkerOptions.workerSrc = '/pdf.worker-compat.js?v=4.10.38';
   }
+  if (typeof navigator !== 'undefined' && /iPad|iPhone|iPod/i.test(navigator.userAgent)) {
+   (window as any).pdfjsLib.disableWorker = true;
+  }
   return Promise.resolve();
  }
 
@@ -168,6 +171,9 @@ const ensurePdfJsLib = (): Promise<void> => {
     const pdfjsLib = (window as any).pdfjsLib;
     if (pdfjsLib) {
      pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf.worker-compat.js?v=4.10.38';
+     if (typeof navigator !== 'undefined' && /iPad|iPhone|iPod/i.test(navigator.userAgent)) {
+      pdfjsLib.disableWorker = true;
+     }
      resolve();
     } else {
      reject(new Error('pdfjsLib unavailable apres chargement du script'));
