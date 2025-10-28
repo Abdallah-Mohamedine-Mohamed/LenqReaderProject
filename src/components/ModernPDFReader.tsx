@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { supabase, Edition } from '../lib/supabase';
 import { ensurePromiseWithResolvers } from '../utils/ensurePromiseWithResolvers';
+ensurePromiseWithResolvers();
 import { ArticleReader } from './ArticleReader';
 
 interface ReaderAccessData {
@@ -142,7 +143,13 @@ const ACCESS_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 const ensurePdfJsLib = (): Promise<void> => {
  ensurePromiseWithResolvers();
  if (typeof window === 'undefined') return Promise.resolve();
- if ((window as any).pdfjsLib) return Promise.resolve();
+ if ((window as any).pdfjsLib) {
+  const lib = (window as any).pdfjsLib;
+  if (lib?.GlobalWorkerOptions) {
+   lib.GlobalWorkerOptions.workerSrc = '/pdf.worker-compat.js';
+  }
+  return Promise.resolve();
+ }
 
  if (!pdfJsLibPromise) {
   pdfJsLibPromise = new Promise((resolve, reject) => {
@@ -160,8 +167,7 @@ const ensurePdfJsLib = (): Promise<void> => {
    script.onload = () => {
     const pdfjsLib = (window as any).pdfjsLib;
     if (pdfjsLib) {
-     pdfjsLib.GlobalWorkerOptions.workerSrc =
-      'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+     pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf.worker-compat.js';
      resolve();
     } else {
      reject(new Error('pdfjsLib unavailable apres chargement du script'));
