@@ -13,10 +13,11 @@ import {
  BookOpen,
  X,
 } from 'lucide-react';
+import { ArticleReader } from './ArticleReader';
 import { supabase, Edition } from '../lib/supabase';
 import { ensurePromiseWithResolvers } from '../utils/ensurePromiseWithResolvers';
+
 ensurePromiseWithResolvers();
-import { ArticleReader } from './ArticleReader';
 
 interface ReaderAccessData {
  tokenId?: string;
@@ -136,9 +137,9 @@ const buildPdfPathCandidates = (rawPath: string | null | undefined) => {
  return { paths: Array.from(result), fileName };
 };
 
-const PDF_JS_VERSION = '3.11.174';
+const PDF_JS_VERSION = '4.10.38';
 const PDF_JS_SCRIPT_URL = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${PDF_JS_VERSION}/pdf.min.js`;
-const PDF_JS_WORKER_SRC = '/pdf.worker-compat.js';
+const PDF_JS_WORKER_SRC = '/pdfjs/pdf.worker.min.mjs';
 
 let pdfJsLibPromise: Promise<void> | null = null;
 const ACCESS_CACHE_KEY_PREFIX = 'modern-pdf-token:';
@@ -1290,7 +1291,7 @@ useEffect(() => {
 
    const loadingTask = window.pdfjsLib.getDocument({
     url: pdfUrl,
-    cMapUrl: 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/cmaps/',
+    cMapUrl: `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${PDF_JS_VERSION}/cmaps/`,
     cMapPacked: true,
    });
 
