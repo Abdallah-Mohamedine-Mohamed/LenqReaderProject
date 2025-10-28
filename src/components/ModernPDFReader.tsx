@@ -137,16 +137,57 @@ const buildPdfPathCandidates = (rawPath: string | null | undefined) => {
 };
 
 let pdfJsLibPromise: Promise<void> | null = null;
+let pdfWorkerPatched = false;
 const ACCESS_CACHE_KEY_PREFIX = 'modern-pdf-token:';
 const ACCESS_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
+const ensurePdfWorkerPolyfill = () => {
+ if (pdfWorkerPatched || typeof window === 'undefined' || typeof window.Worker === 'undefined') {
+  return;
+ }
+
+ const OriginalWorker = window.Worker;
+  const PatchedWorker = function (this: Worker, scriptURL: string | URL, options?: WorkerOptions) {
+  const url = typeof scriptURL === 'string' ? scriptURL : scriptURL.toString();
+  if (/pdf\.worker/i.test(url)) {
+   const polyfillSource = `
+    if (typeof Promise !== 'undefined' && typeof Promise.withResolvers !== 'function') {
+      Promise.withResolvers = function withResolvers() {
+        let resolve;
+        let reject;
+        const promise = new Promise((res, rej) => {
+          resolve = res;
+          reject = rej;
+        });
+        return { promise, resolve, reject };
+      };
+    }
+    importScripts("${url}");
+   `;
+   const blob = new Blob([polyfillSource], { type: 'application/javascript' });
+   const blobUrl = URL.createObjectURL(blob);
+   const workerInstance = new OriginalWorker(blobUrl, options);
+   const revoke = () => URL.revokeObjectURL(blobUrl);
+   workerInstance.addEventListener('message', revoke, { once: true });
+   workerInstance.addEventListener('error', revoke, { once: true });
+   return workerInstance;
+  }
+  return new OriginalWorker(scriptURL, options);
+ } as typeof Worker;
+
+ PatchedWorker.prototype = OriginalWorker.prototype;
+ window.Worker = PatchedWorker;
+ pdfWorkerPatched = true;
+};
+
 const ensurePdfJsLib = (): Promise<void> => {
  ensurePromiseWithResolvers();
+ ensurePdfWorkerPolyfill();
  if (typeof window === 'undefined') return Promise.resolve();
  if ((window as any).pdfjsLib) {
   const lib = (window as any).pdfjsLib;
   if (lib?.GlobalWorkerOptions) {
-   lib.GlobalWorkerOptions.workerSrc = '/pdf.worker-compat.js?v=4.10.38';
+   lib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
   }
   return Promise.resolve();
  }
@@ -161,13 +202,13 @@ const ensurePdfJsLib = (): Promise<void> => {
    }
 
    const script = document.createElement('script');
-   script.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.min.js';
+   script.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
    script.async = true;
    script.dataset.pdfjs = 'true';
    script.onload = () => {
     const pdfjsLib = (window as any).pdfjsLib;
     if (pdfjsLib) {
-     pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf.worker-compat.js?v=4.10.38';
+     pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
      resolve();
     } else {
      reject(new Error('pdfjsLib unavailable apres chargement du script'));
@@ -1266,7 +1307,7 @@ useEffect(() => {
 
    const loadingTask = window.pdfjsLib.getDocument({
     url: pdfUrl,
-    cMapUrl: 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/cmaps/',
+    cMapUrl: 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/cmaps/',
     cMapPacked: true,
    });
 
