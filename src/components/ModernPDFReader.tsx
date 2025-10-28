@@ -17,10 +17,6 @@ import { supabase, Edition } from '../lib/supabase';
 import { ensurePromiseWithResolvers } from '../utils/ensurePromiseWithResolvers';
 ensurePromiseWithResolvers();
 import { ArticleReader } from './ArticleReader';
-import * as pdfjsLib from 'pdfjs-dist';
-import pdfjsWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
-
-pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker;
 
 interface ReaderAccessData {
  tokenId?: string;
@@ -140,12 +136,49 @@ const buildPdfPathCandidates = (rawPath: string | null | undefined) => {
  return { paths: Array.from(result), fileName };
 };
 
+let pdfJsLibPromise: Promise<void> | null = null;
 const ACCESS_CACHE_KEY_PREFIX = 'modern-pdf-token:';
 const ACCESS_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
 const ensurePdfJsLib = (): Promise<void> => {
  ensurePromiseWithResolvers();
- return Promise.resolve();
+ if (typeof window === 'undefined') return Promise.resolve();
+ if ((window as any).pdfjsLib) {
+  const lib = (window as any).pdfjsLib;
+  if (lib?.GlobalWorkerOptions) {
+   lib.GlobalWorkerOptions.workerSrc = '/pdf.worker-compat.js?v=4.10.38';
+  }
+  return Promise.resolve();
+ }
+
+ if (!pdfJsLibPromise) {
+  pdfJsLibPromise = new Promise((resolve, reject) => {
+   const existing = document.querySelector<HTMLScriptElement>('script[data-pdfjs]');
+   if (existing) {
+    existing.addEventListener('load', () => resolve());
+    existing.addEventListener('error', reject);
+    return;
+   }
+
+   const script = document.createElement('script');
+   script.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.min.js';
+   script.async = true;
+   script.dataset.pdfjs = 'true';
+   script.onload = () => {
+    const pdfjsLib = (window as any).pdfjsLib;
+    if (pdfjsLib) {
+     pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf.worker-compat.js?v=4.10.38';
+     resolve();
+    } else {
+     reject(new Error('pdfjsLib unavailable apres chargement du script'));
+    }
+   };
+   script.onerror = reject;
+   document.head.appendChild(script);
+ });
+ }
+
+ return pdfJsLibPromise;
 };
 
 const readCachedAccessData = (token: string): ReaderAccessData | null => {
@@ -1231,7 +1264,7 @@ useEffect(() => {
     }
    }
 
-   const loadingTask = pdfjsLib.getDocument({
+   const loadingTask = window.pdfjsLib.getDocument({
     url: pdfUrl,
     cMapUrl: 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/cmaps/',
     cMapPacked: true,
