@@ -137,6 +137,7 @@ const buildPdfPathCandidates = (rawPath: string | null | undefined) => {
 };
 
 let pdfJsLibPromise: Promise<void> | null = null;
+let workerBlobUrl: string | null = null;
 const ACCESS_CACHE_KEY_PREFIX = 'modern-pdf-token:';
 const ACCESS_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
@@ -147,9 +148,27 @@ const ensurePdfJsLib = (): Promise<void> => {
  if ((window as any).pdfjsLib) {
   const lib = (window as any).pdfjsLib;
   if (lib?.GlobalWorkerOptions) {
-   lib.GlobalWorkerOptions.workerSrc = '';
+   if (workerBlobUrl) {
+    URL.revokeObjectURL(workerBlobUrl);
+    workerBlobUrl = null;
+   }
+   const workerScript = `
+    if (typeof Promise !== 'undefined' && typeof Promise.withResolvers !== 'function') {
+      Promise.withResolvers = function withResolvers() {
+        let resolve;
+        let reject;
+        const promise = new Promise((res, rej) => { resolve = res; reject = rej; });
+        return { promise, resolve, reject };
+      };
+    }
+    importScripts('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.worker.min.js');
+   `;
+   workerBlobUrl = URL.createObjectURL(
+    new Blob([workerScript], { type: 'application/javascript' })
+   );
+   lib.GlobalWorkerOptions.workerSrc = workerBlobUrl;
+   lib.disableWorker = false;
   }
-  lib.disableWorker = true;
   return Promise.resolve();
  }
 
@@ -169,10 +188,26 @@ const ensurePdfJsLib = (): Promise<void> => {
    script.onload = () => {
     const pdfjsLib = (window as any).pdfjsLib;
     if (pdfjsLib) {
-     if (pdfjsLib.GlobalWorkerOptions) {
-      pdfjsLib.GlobalWorkerOptions.workerSrc = '';
+     if (workerBlobUrl) {
+      URL.revokeObjectURL(workerBlobUrl);
+      workerBlobUrl = null;
      }
-     pdfjsLib.disableWorker = true;
+     const workerScript = `
+      if (typeof Promise !== 'undefined' && typeof Promise.withResolvers !== 'function') {
+        Promise.withResolvers = function withResolvers() {
+          let resolve;
+          let reject;
+          const promise = new Promise((res, rej) => { resolve = res; reject = rej; });
+          return { promise, resolve, reject };
+        };
+      }
+      importScripts('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.worker.min.js');
+     `;
+     workerBlobUrl = URL.createObjectURL(
+      new Blob([workerScript], { type: 'application/javascript' })
+     );
+     pdfjsLib.GlobalWorkerOptions.workerSrc = workerBlobUrl;
+     pdfjsLib.disableWorker = false;
      resolve();
     } else {
      reject(new Error('pdfjsLib unavailable apres chargement du script'));
@@ -1873,4 +1908,3 @@ declare global {
   pdfDocument: any;
  }
 }
-
