@@ -143,16 +143,23 @@ const ACCESS_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 const ensurePdfJsLib = (): Promise<void> => {
  ensurePromiseWithResolvers();
  if (typeof window === 'undefined') return Promise.resolve();
+ const isIOS =
+  typeof navigator !== 'undefined' && /iPad|iPhone|iPod/i.test(navigator.userAgent);
+
  if ((window as any).pdfjsLib) {
   const lib = (window as any).pdfjsLib;
   if (lib?.GlobalWorkerOptions) {
-   lib.GlobalWorkerOptions.workerSrc = '/pdf.worker-compat.js?v=4.10.38';
-  }
-  if (typeof navigator !== 'undefined' && /iPad|iPhone|iPod/i.test(navigator.userAgent)) {
-   (window as any).pdfjsLib.disableWorker = true;
+   if (isIOS) {
+    lib.GlobalWorkerOptions.workerSrc = '';
+    lib.disableWorker = true;
+   } else {
+    lib.GlobalWorkerOptions.workerSrc =
+     'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.worker.min.js';
+    lib.disableWorker = false;
+   }
   }
   return Promise.resolve();
- }
+}
 
  if (!pdfJsLibPromise) {
   pdfJsLibPromise = new Promise((resolve, reject) => {
@@ -170,9 +177,13 @@ const ensurePdfJsLib = (): Promise<void> => {
    script.onload = () => {
     const pdfjsLib = (window as any).pdfjsLib;
     if (pdfjsLib) {
-     pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf.worker-compat.js?v=4.10.38';
-     if (typeof navigator !== 'undefined' && /iPad|iPhone|iPod/i.test(navigator.userAgent)) {
+     if (isIOS) {
+      pdfjsLib.GlobalWorkerOptions.workerSrc = '';
       pdfjsLib.disableWorker = true;
+     } else {
+      pdfjsLib.GlobalWorkerOptions.workerSrc =
+       'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.worker.min.js';
+      pdfjsLib.disableWorker = false;
      }
      resolve();
     } else {
