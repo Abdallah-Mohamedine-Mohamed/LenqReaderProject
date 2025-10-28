@@ -137,29 +137,40 @@ const buildPdfPathCandidates = (rawPath: string | null | undefined) => {
 };
 
 let pdfJsLibPromise: Promise<void> | null = null;
+let workerBlobUrl: string | null = null;
 const ACCESS_CACHE_KEY_PREFIX = 'modern-pdf-token:';
 const ACCESS_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
 const ensurePdfJsLib = (): Promise<void> => {
  ensurePromiseWithResolvers();
  if (typeof window === 'undefined') return Promise.resolve();
- const isIOS =
-  typeof navigator !== 'undefined' && /iPad|iPhone|iPod/i.test(navigator.userAgent);
 
  if ((window as any).pdfjsLib) {
   const lib = (window as any).pdfjsLib;
   if (lib?.GlobalWorkerOptions) {
-   if (isIOS) {
-    lib.GlobalWorkerOptions.workerSrc = '';
-    lib.disableWorker = true;
-   } else {
-    lib.GlobalWorkerOptions.workerSrc =
-     'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.worker.min.js';
-    lib.disableWorker = false;
+   if (workerBlobUrl) {
+    URL.revokeObjectURL(workerBlobUrl);
+    workerBlobUrl = null;
    }
+   const workerScript = `
+    if (typeof Promise !== 'undefined' && typeof Promise.withResolvers !== 'function') {
+      Promise.withResolvers = function withResolvers() {
+        let resolve;
+        let reject;
+        const promise = new Promise((res, rej) => { resolve = res; reject = rej; });
+        return { promise, resolve, reject };
+      };
+    }
+    importScripts('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.worker.min.js');
+   `;
+   workerBlobUrl = URL.createObjectURL(
+    new Blob([workerScript], { type: 'application/javascript' })
+   );
+   lib.GlobalWorkerOptions.workerSrc = workerBlobUrl;
+   lib.disableWorker = false;
   }
   return Promise.resolve();
-}
+ }
 
  if (!pdfJsLibPromise) {
   pdfJsLibPromise = new Promise((resolve, reject) => {
@@ -177,14 +188,26 @@ const ensurePdfJsLib = (): Promise<void> => {
    script.onload = () => {
     const pdfjsLib = (window as any).pdfjsLib;
     if (pdfjsLib) {
-     if (isIOS) {
-      pdfjsLib.GlobalWorkerOptions.workerSrc = '';
-      pdfjsLib.disableWorker = true;
-     } else {
-      pdfjsLib.GlobalWorkerOptions.workerSrc =
-       'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.worker.min.js';
-      pdfjsLib.disableWorker = false;
+     if (workerBlobUrl) {
+      URL.revokeObjectURL(workerBlobUrl);
+      workerBlobUrl = null;
      }
+     const workerScript = `
+      if (typeof Promise !== 'undefined' && typeof Promise.withResolvers !== 'function') {
+        Promise.withResolvers = function withResolvers() {
+          let resolve;
+          let reject;
+          const promise = new Promise((res, rej) => { resolve = res; reject = rej; });
+          return { promise, resolve, reject };
+        };
+      }
+      importScripts('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.worker.min.js');
+     `;
+     workerBlobUrl = URL.createObjectURL(
+      new Blob([workerScript], { type: 'application/javascript' })
+     );
+     pdfjsLib.GlobalWorkerOptions.workerSrc = workerBlobUrl;
+     pdfjsLib.disableWorker = false;
      resolve();
     } else {
      reject(new Error('pdfjsLib unavailable apres chargement du script'));
